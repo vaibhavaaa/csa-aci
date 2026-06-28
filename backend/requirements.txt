@@ -1,22 +1,38 @@
-fastapi
-uvicorn
-sqlalchemy
-psycopg2-binary
-python-jose
-passlib[bcrypt]
-python-multipart
-pydantic
-redis[asyncio]
-rq
-websockets
+# Pinned for reproducibility — versions verified against the passing test suite
+# (Python 3.11–3.13). Bump deliberately, then re-run the backend test suite.
+
+# ── Web framework / server ──
+fastapi==0.136.1
+uvicorn==0.34.3
+websockets==16.0
+
+# ── Database ──
+sqlalchemy==2.0.49
+psycopg2-binary==2.9.12
+
+# ── Auth / JWT ──
+python-jose==3.5.0
+passlib[bcrypt]==1.7.4
+bcrypt==5.0.0
+python-multipart==0.0.20
+
+# ── Validation / config ──
+pydantic==2.11.5
 python-dotenv==1.0.1
-boto3
+
+# ── Redis (WebSocket pub/sub) + task queue ──
+redis[asyncio]==7.4.0
+rq==2.8.0
+
+# ── AWS SDK ──
+boto3==1.40.11
 
 # ── Research / statistics (Phase 0+) ──
-numpy>=1.26,<3
-scipy>=1.11,<2
-pandas>=2.1,<3
+# Exact pins matter here: numerical results can shift across numpy/scipy versions.
+numpy==2.4.1
+scipy==1.17.1
+pandas==2.3.3
 
 # ── Test suite ──
-pytest>=8.0,<9
-httpx>=0.27          # FastAPI TestClient dependency
+pytest==8.4.2
+httpx==0.28.1          # FastAPI TestClient dependency

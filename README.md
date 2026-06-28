@@ -20,7 +20,7 @@ decision auditable and bounded by checkable operating guarantees.
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![Backend: FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)](https://fastapi.tiangolo.com/)
 [![Frontend: React + Vite](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61dafb)](https://vitejs.dev/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](#license)
+[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-green)](#license)
 
 ---
 
@@ -193,6 +193,5 @@ paper-section mapping in the table above mirrors its structure; the draft is ava
 on request.
 
 ## License
-MIT — see the `license` field in
-[`csa_aci_fixed/pyproject.toml`](csa_aci_fixed/pyproject.toml). *(A standalone `LICENSE`
-file can be added on request.)*
+BSD-3-Clause — see [`LICENSE`](LICENSE). The same identifier is declared in the
+`license` field of [`csa_aci_fixed/pyproject.toml`](csa_aci_fixed/pyproject.toml).
