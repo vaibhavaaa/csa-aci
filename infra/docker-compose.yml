@@ -1,0 +1,79 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: csa_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../backend/.env
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ../backend:/app
+      # Mount the repo's data/ at /data so trace_loader can import the
+      # data.loaders package and read real traces from data/raw/. Inside the
+      # container the backend lives at /app, so _ROOT (parents[3]) resolves to
+      # "/" and _DATA to "/data" — this mount makes that path real.
+      - ../data:/data
+      # Mount the csa_aci package source live. It is `pip install -e`'d from
+      # /csa_aci_fixed in the Dockerfile, so mounting the host source there makes
+      # edits to the engine/agents take effect on backend restart (no rebuild).
+      - ../csa_aci_fixed:/csa_aci_fixed
+    restart: always
+
+  frontend:
+    build:
+      context: ../frontend
+    container_name: csa_frontend
+    # Frontend uses relative API paths (VITE_API_URL="") and is served as a
+    # static production build. It MUST be accessed via the nginx reverse proxy
+    # on port 80 (http://localhost), which proxies /auth /tasks /ws to backend.
+    # Port 5173 is the container's own mini-nginx and does NOT proxy the API.
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    restart: always
+
+  postgres:
+    image: postgres:15
+    container_name: csa_postgres
+    environment:
+      POSTGRES_USER: csa_user
+      POSTGRES_PASSWORD: csa_pass
+      POSTGRES_DB: csa_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  redis:
+    image: redis:7
+    container_name: csa_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  nginx:
+    image: nginx:alpine
+    container_name: csa_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+      - frontend
+    restart: always
+
+volumes:
+  postgres_data:

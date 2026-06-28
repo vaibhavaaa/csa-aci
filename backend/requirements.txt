@@ -1,0 +1,22 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-jose
+passlib[bcrypt]
+python-multipart
+pydantic
+redis[asyncio]
+rq
+websockets
+python-dotenv==1.0.1
+boto3
+
+# ── Research / statistics (Phase 0+) ──
+numpy>=1.26,<3
+scipy>=1.11,<2
+pandas>=2.1,<3
+
+# ── Test suite ──
+pytest>=8.0,<9
+httpx>=0.27          # FastAPI TestClient dependency

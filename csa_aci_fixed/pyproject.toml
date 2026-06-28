@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csa-aci"
+description = "CSA-ACI: a multi-signal, explainable, stability-bounded governor (Cognitive Constraint Engine) for cloud autoscaling"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Vaibhav Kannoji"}]
+keywords = [
+    "autoscaling",
+    "control-theory",
+    "stability",
+    "cloud-infrastructure",
+    "intent-arbitration",
+    "cognitive-constraint-engine",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+# No runtime dependencies — csa_aci is pure standard library.
+dependencies = []
+
+# [project.urls] intentionally omitted until a public repo exists.
+# Add Homepage/Repository/Issues here once the project is on GitHub,
+# and a paper citation/DOI once the paper is published.
+
+[tool.setuptools.dynamic]
+version = {attr = "csa_aci.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"

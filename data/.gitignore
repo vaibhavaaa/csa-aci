@@ -1,0 +1,10 @@
+# Real traces are large — do not commit them.
+raw/**
+processed/**
+
+# Keep the directory structure.
+!raw/
+!raw/google/
+!raw/wikipedia/
+!processed/
+!**/.gitkeep

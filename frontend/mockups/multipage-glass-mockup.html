@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CSA-ACI — Multi-page Glass Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --cyan: #00e5ff;
+    --violet: #a855f7;
+    --magenta: #ec4899;
+    --green: #00ff99;
+    --amber: #ffd740;
+    --orange: #ff9800;
+    --red: #ff4444;
+    --text: #eaeeff;
+    --muted: #8b95c9;
+    --faint: #5b6391;
+    --glass: rgba(255,255,255,0.045);
+    --glass-strong: rgba(255,255,255,0.08);
+    --border: rgba(255,255,255,0.10);
+    --border-strong: rgba(255,255,255,0.18);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: var(--text);
+    background: #06060f;
+    overflow: hidden;
+  }
+
+  /* ─── Aurora animated background ─── */
+  .aurora { position: fixed; inset: 0; z-index: 0; overflow: hidden; background: radial-gradient(circle at 50% 50%, #0d1030, #06060f 80%); }
+  .blob { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.55; mix-blend-mode: screen; }
+  .blob.b1 { width: 600px; height: 600px; background: #00e5ff; top: -180px; left: -120px; animation: drift1 18s ease-in-out infinite; }
+  .blob.b2 { width: 520px; height: 520px; background: #a855f7; top: 20%; right: -160px; animation: drift2 22s ease-in-out infinite; }
+  .blob.b3 { width: 480px; height: 480px; background: #ec4899; bottom: -200px; left: 30%; animation: drift3 26s ease-in-out infinite; }
+  .blob.b4 { width: 420px; height: 420px; background: #00ff99; bottom: 10%; right: 20%; opacity: 0.30; animation: drift1 30s ease-in-out infinite reverse; }
+  @keyframes drift1 { 0%,100% { transform: translate(0,0) scale(1);} 50% { transform: translate(80px,60px) scale(1.15);} }
+  @keyframes drift2 { 0%,100% { transform: translate(0,0) scale(1);} 50% { transform: translate(-70px,40px) scale(1.1);} }
+  @keyframes drift3 { 0%,100% { transform: translate(0,0) scale(1);} 50% { transform: translate(50px,-60px) scale(1.2);} }
+
+  /* ─── App shell ─── */
+  .app { position: relative; z-index: 1; display: grid; grid-template-columns: 248px 1fr; height: 100vh; }
+
+  /* Sidebar */
+  .sidebar {
+    backdrop-filter: blur(24px) saturate(140%);
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    border-right: 1px solid var(--border);
+    padding: 26px 18px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 22px; }
+  .brand .logo {
+    width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; font-weight: 800; font-size: 16px;
+    background: linear-gradient(135deg, var(--cyan), var(--violet)); color: #06060f;
+    box-shadow: 0 0 22px rgba(0,229,255,0.45);
+  }
+  .brand .name { font-weight: 800; letter-spacing: 0.5px; font-size: 16px; }
+  .brand .sub { font-size: 10px; color: var(--faint); letter-spacing: 1px; text-transform: uppercase; }
+
+  .navlabel { font-size: 10px; color: var(--faint); letter-spacing: 1.5px; text-transform: uppercase; padding: 14px 12px 6px; }
+  .nav {
+    display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-radius: 12px; cursor: pointer;
+    color: var(--muted); font-weight: 600; font-size: 14px; border: 1px solid transparent; transition: all .18s;
+  }
+  .nav .ico { width: 18px; height: 18px; opacity: .9; }
+  .nav:hover { background: var(--glass); color: var(--text); }
+  .nav.active {
+    color: #fff;
+    background: linear-gradient(135deg, rgba(0,229,255,0.18), rgba(168,85,247,0.18));
+    border: 1px solid rgba(0,229,255,0.35);
+    box-shadow: inset 0 0 16px rgba(0,229,255,0.10);
+  }
+  .nav.active .ico { color: var(--cyan); }
+  .sidebar .spacer { flex: 1; }
+  .statuschip {
+    display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--green);
+    background: rgba(0,255,153,0.08); border: 1px solid rgba(0,255,153,0.25); border-radius: 12px; padding: 10px 14px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .4; } }
+
+  /* Main */
+  .main { overflow-y: auto; padding: 26px 34px 60px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .topbar h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.4px; }
+  .topbar .crumb { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .topbar .actions { display: flex; gap: 10px; }
+  .btn {
+    font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 11px; padding: 9px 16px;
+    color: var(--text); background: var(--glass); border: 1px solid var(--border); backdrop-filter: blur(10px); transition: all .18s;
+  }
+  .btn:hover { border-color: var(--border-strong); background: var(--glass-strong); }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--cyan), var(--violet)); color: #06060f; border: none;
+    box-shadow: 0 6px 24px rgba(0,229,255,0.30);
+  }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  /* Glass card primitive */
+  .card {
+    backdrop-filter: blur(22px) saturate(140%);
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 22px 24px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.06);
+    position: relative; overflow: hidden;
+  }
+  .card .glow { position: absolute; top: -40%; right: -10%; width: 180px; height: 180px; border-radius: 50%; filter: blur(50px); opacity: .35; pointer-events: none; }
+  .card-label { font-size: 11px; color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; font-weight: 600; display: flex; align-items: center; gap: 9px; }
+  .card-label::before { content:""; width: 4px; height: 13px; border-radius: 2px; background: linear-gradient(var(--cyan), var(--violet)); }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 22px; }
+  .kpi .k-lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  .kpi .k-val { font-size: 34px; font-weight: 800; margin-top: 12px; letter-spacing: -1.5px; line-height: 1; }
+  .kpi .k-sub { font-size: 11.5px; color: var(--faint); margin-top: 10px; }
+  .chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 4px 11px; border-radius: 999px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; }
+  .grid-2b { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .section-gap { margin-top: 16px; }
+
+  /* Chart */
+  .chart-wrap { margin-top: 18px; height: 180px; }
+  .feed-row { display: flex; align-items: center; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13px; }
+  .feed-row:last-child { border-bottom: none; }
+  .badge { font-size: 11px; font-weight: 700; letter-spacing: .5px; padding: 3px 9px; border-radius: 7px; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* Intent timeline */
+  .timeline { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 14px; }
+  .tl-cell { width: 26px; height: 26px; border-radius: 6px; }
+
+  /* table */
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
+  th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 1px; color: var(--faint); font-weight: 600; padding: 8px 12px; }
+  td { padding: 11px 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+  tr:hover td { background: rgba(255,255,255,0.025); }
+  .winner td { color: var(--green); font-weight: 600; }
+
+  .bar-track { height: 8px; border-radius: 6px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--cyan), var(--violet)); }
+
+  .page { display: none; animation: fade .35s ease; }
+  .page.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  .runbox { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 7px; }
+  .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .field input {
+    background: rgba(0,0,0,0.3); border: 1px solid var(--border); color: var(--text); border-radius: 10px;
+    padding: 9px 13px; font-family: 'JetBrains Mono', monospace; font-size: 14px; width: 130px;
+  }
+</style>
+</head>
+<body>
+  <div class="aurora">
+    <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+  </div>
+
+  <div class="app">
+    <!-- ─────────── SIDEBAR ─────────── -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">C</div>
+        <div>
+          <div class="name">CSA-ACI</div>
+          <div class="sub">Cognitive Engine</div>
+        </div>
+      </div>
+
+      <div class="navlabel">Console</div>
+      <div class="nav active" data-page="overview">▦ &nbsp;Overview</div>
+      <div class="nav" data-page="live">◉ &nbsp;Live Control</div>
+      <div class="nav" data-page="sim">∿ &nbsp;Simulation</div>
+      <div class="nav" data-page="exp">⚗ &nbsp;Experiments</div>
+
+      <div class="spacer"></div>
+      <div class="statuschip"><span class="dot"></span> WebSocket Live</div>
+    </aside>
+
+    <!-- ─────────── MAIN ─────────── -->
+    <main class="main">
+
+      <!-- ===== OVERVIEW ===== -->
+      <section class="page active" id="overview">
+        <div class="topbar">
+          <div><h1>Overview</h1><div class="crumb">Governance health · all-time · live telemetry</div></div>
+          <div class="actions"><button class="btn">Reset</button><button class="btn primary">Run Decision</button></div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="card kpi"><div class="glow" style="background:var(--cyan)"></div>
+            <div class="k-lbl">Total Runs</div><div class="k-val" style="color:var(--cyan)">128</div><div class="k-sub">+12 today</div></div>
+          <div class="card kpi"><div class="glow" style="background:var(--green)"></div>
+            <div class="k-lbl">Avg Trust</div><div class="k-val" style="color:var(--green)">0.87</div><div class="k-sub">healthy band</div></div>
+          <div class="card kpi"><div class="glow" style="background:var(--green)"></div>
+            <div class="k-lbl">High Trust</div><div class="k-val" style="color:var(--green)">82%</div><div class="k-sub">of all runs</div></div>
+          <div class="card kpi"><div class="glow" style="background:var(--red)"></div>
+            <div class="k-lbl">Low Trust</div><div class="k-val" style="color:var(--red)">11</div><div class="k-sub">flagged</div></div>
+          <div class="card kpi"><div class="glow" style="background:var(--green)"></div>
+            <div class="k-lbl">System Health</div><div class="k-val" style="font-size:24px;color:var(--green);margin-top:16px">STABLE</div>
+            <span class="chip" style="background:rgba(0,255,153,0.14);color:var(--green);margin-top:8px">● nominal</span></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-label">CSI &amp; Trust — last 40 steps</div>
+            <div class="chart-wrap">
+              <svg viewBox="0 0 600 180" width="100%" height="100%" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.55"/>
+                    <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+                  </linearGradient>
+                  <linearGradient id="ln" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#a855f7"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0,140 C60,120 90,80 140,90 C200,102 240,40 300,55 C360,70 400,30 460,46 C520,60 560,40 600,52 L600,180 L0,180 Z" fill="url(#ag)"/>
+                <path d="M0,140 C60,120 90,80 140,90 C200,102 240,40 300,55 C360,70 400,30 460,46 C520,60 560,40 600,52" fill="none" stroke="url(#ln)" stroke-width="3" style="filter:drop-shadow(0 0 6px rgba(0,229,255,0.6))"/>
+              </svg>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">Recent Decisions</div>
+            <div style="margin-top:10px">
+              <div class="feed-row"><span class="mono">step 128</span><span class="badge" style="background:rgba(0,229,255,0.15);color:var(--cyan)">SCALE_UP</span></div>
+              <div class="feed-row"><span class="mono">step 127</span><span class="badge" style="background:rgba(68,68,68,0.4);color:#aab">HOLD</span></div>
+              <div class="feed-row"><span class="mono">step 126</span><span class="badge" style="background:rgba(255,152,0,0.15);color:var(--orange)">SCALE_DOWN</span></div>
+              <div class="feed-row"><span class="mono">step 125</span><span class="badge" style="background:rgba(0,229,255,0.15);color:var(--cyan)">SCALE_UP</span></div>
+              <div class="feed-row"><span class="mono">step 124</span><span class="badge" style="background:rgba(68,68,68,0.4);color:#aab">HOLD</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== LIVE CONTROL ===== -->
+      <section class="page" id="live">
+        <div class="topbar">
+          <div><h1>Live Control</h1><div class="crumb">Fire a single CCE operational decision · watch the live feed</div></div>
+          <div class="actions"><button class="btn primary">⚡ Fire Decision</button></div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">Single-Step CCE Run — manual telemetry</div>
+          <div class="runbox" style="margin-top:18px">
+            <div class="field"><label>Observed Latency</label><input value="142.0 ms"/></div>
+            <div class="field"><label>CPU Utilisation</label><input value="0.78"/></div>
+            <div class="field"><label>Throughput</label><input value="2400 rps"/></div>
+            <button class="btn primary" style="height:40px">Arbitrate →</button>
+          </div>
+        </div>
+
+        <div class="grid-2 section-gap">
+          <div class="card">
+            <div class="card-label">Latest Arbitration Result</div>
+            <div style="display:flex;gap:24px;margin-top:18px;flex-wrap:wrap">
+              <div><div class="k-lbl" style="color:var(--muted);font-size:11px">FINAL INTENT</div>
+                <div style="margin-top:8px"><span class="badge" style="font-size:15px;padding:6px 14px;background:rgba(0,229,255,0.15);color:var(--cyan)">SCALE_UP</span></div></div>
+              <div><div class="k-lbl" style="color:var(--muted);font-size:11px">REASON</div>
+                <div style="margin-top:8px"><span class="badge" style="font-size:15px;padding:6px 14px;background:rgba(0,255,153,0.15);color:var(--green)">EVIDENCE ACCEPT</span></div></div>
+              <div><div class="k-lbl" style="color:var(--muted);font-size:11px">TRUST</div>
+                <div class="k-val" style="font-size:30px;color:var(--green);margin-top:6px">0.91</div></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">Live Decisions Feed</div>
+            <div style="margin-top:10px">
+              <div class="feed-row"><span class="mono">12:04:31</span><span class="badge" style="background:rgba(0,229,255,0.15);color:var(--cyan)">SCALE_UP</span><span class="mono" style="color:var(--green)">0.91</span></div>
+              <div class="feed-row"><span class="mono">12:04:28</span><span class="badge" style="background:rgba(255,68,68,0.15);color:var(--red)">EVID_REJECT</span><span class="mono" style="color:var(--amber)">0.64</span></div>
+              <div class="feed-row"><span class="mono">12:04:25</span><span class="badge" style="background:rgba(68,68,68,0.4);color:#aab">HOLD</span><span class="mono" style="color:var(--green)">0.88</span></div>
+              <div class="feed-row"><span class="mono">12:04:22</span><span class="badge" style="background:rgba(255,215,64,0.15);color:var(--amber)">CONFLICT</span><span class="mono" style="color:var(--amber)">0.72</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== SIMULATION ===== -->
+      <section class="page" id="sim">
+        <div class="topbar">
+          <div><h1>Simulation</h1><div class="crumb">Run a multi-step scenario · seed 42 · σ=20ms noise</div></div>
+          <div class="actions"><button class="btn">Seed: 42</button><button class="btn primary">▶ Run 60 steps</button></div>
+        </div>
+
+        <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+          <div class="card kpi"><div class="k-lbl">Total Steps</div><div class="k-val">60</div></div>
+          <div class="card kpi"><div class="k-lbl">Intent Switches</div><div class="k-val" style="color:var(--amber)">7</div></div>
+          <div class="card kpi"><div class="k-lbl">Switch Rate</div><div class="k-val" style="color:var(--orange)">11.7%</div></div>
+          <div class="card kpi"><div class="k-lbl">Conflicts</div><div class="k-val" style="color:var(--red)">3</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">Intent Timeline</div>
+          <div class="timeline" id="tl"></div>
+        </div>
+
+        <div class="card section-gap">
+          <div class="card-label">Latency vs Decision Threshold</div>
+          <div class="chart-wrap" style="height:200px">
+            <svg viewBox="0 0 600 200" width="100%" height="100%" preserveAspectRatio="none">
+              <defs><linearGradient id="ag2" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#a855f7" stop-opacity="0.5"/><stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
+              </linearGradient></defs>
+              <line x1="0" y1="90" x2="600" y2="90" stroke="#ff444466" stroke-width="1.5" stroke-dasharray="6 6"/>
+              <text x="8" y="84" fill="#ff6666" font-size="11" font-family="monospace">up = 100ms</text>
+              <path d="M0,150 C50,130 90,160 140,120 C190,80 230,140 290,100 C350,60 390,120 450,70 C510,40 560,90 600,75 L600,200 L0,200 Z" fill="url(#ag2)"/>
+              <path d="M0,150 C50,130 90,160 140,120 C190,80 230,140 290,100 C350,60 390,120 450,70 C510,40 560,90 600,75" fill="none" stroke="#a855f7" stroke-width="3" style="filter:drop-shadow(0 0 6px rgba(168,85,247,0.6))"/>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== EXPERIMENTS ===== -->
+      <section class="page" id="exp">
+        <div class="topbar">
+          <div><h1>Experiments</h1><div class="crumb">Ablation · controller comparison · multi-scenario — paper §5</div></div>
+          <div class="actions"><button class="btn">Ablation</button><button class="btn">Comparison</button><button class="btn primary">Run Suite</button></div>
+        </div>
+
+        <div class="grid-2b">
+          <div class="card">
+            <div class="card-label">Controller Comparison — CSI (higher = better)</div>
+            <div style="margin-top:18px;display:flex;flex-direction:column;gap:16px">
+              <div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:7px"><span>CCE (ours)</span><span class="mono" style="color:var(--green)">0.84</span></div><div class="bar-track"><div class="bar-fill" style="width:84%"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:7px"><span>EMA Reactive</span><span class="mono" style="color:var(--muted)">0.61</span></div><div class="bar-track"><div class="bar-fill" style="width:61%;background:linear-gradient(90deg,#5b6391,#8b95c9)"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:7px"><span>Hysteresis</span><span class="mono" style="color:var(--muted)">0.54</span></div><div class="bar-track"><div class="bar-fill" style="width:54%;background:linear-gradient(90deg,#5b6391,#8b95c9)"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:7px"><span>Threshold</span><span class="mono" style="color:var(--muted)">0.47</span></div><div class="bar-track"><div class="bar-fill" style="width:47%;background:linear-gradient(90deg,#5b6391,#8b95c9)"></div></div></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-label">Ablation — component contribution</div>
+            <table>
+              <thead><tr><th>Variant</th><th>Switches</th><th>F1</th><th>CSI</th></tr></thead>
+              <tbody>
+                <tr class="winner"><td>Full CCE</td><td>7</td><td>0.88</td><td>0.84</td></tr>
+                <tr><td>– Evidence gate</td><td>21</td><td>0.71</td><td>0.62</td></tr>
+                <tr><td>– Dwell time</td><td>33</td><td>0.69</td><td>0.55</td></tr>
+                <tr><td>– Both (reactive)</td><td>48</td><td>0.58</td><td>0.41</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card section-gap">
+          <div class="card-label">Multi-scenario Generalization — switches prevented</div>
+          <div style="display:flex;gap:40px;margin-top:18px;flex-wrap:wrap">
+            <div><div class="k-val" style="color:var(--cyan);font-size:30px">93%</div><div class="k-sub">noisy burst</div></div>
+            <div><div class="k-val" style="color:var(--violet);font-size:30px">98%</div><div class="k-sub">flapping load</div></div>
+            <div><div class="k-val" style="color:var(--magenta);font-size:30px">95%</div><div class="k-sub">diurnal cycle</div></div>
+            <div><div class="k-val" style="color:var(--green);font-size:30px">3.5×</div><div class="k-sub">fewer interventions</div></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    // sidebar navigation
+    const navs = document.querySelectorAll('.nav');
+    const pages = document.querySelectorAll('.page');
+    navs.forEach(n => n.addEventListener('click', () => {
+      navs.forEach(x => x.classList.remove('active'));
+      pages.forEach(p => p.classList.remove('active'));
+      n.classList.add('active');
+      document.getElementById(n.dataset.page).classList.add('active');
+      document.querySelector('.main').scrollTo({ top: 0 });
+    }));
+
+    // intent timeline cells
+    const intents = [
+      ['#00e5ff',1],['#00e5ff',0],['#444',0],['#444',0],['#ff9800',1],['#ff9800',0],['#444',1],['#444',0],
+      ['#00e5ff',1],['#00e5ff',0],['#00e5ff',0],['#444',1],['#444',0],['#ff9800',1],['#ff9800',0],['#ff9800',0],
+      ['#444',1],['#444',0],['#00e5ff',1],['#00e5ff',0],['#00e5ff',0],['#00e5ff',0],['#444',1],['#444',0],
+      ['#444',0],['#ff9800',1],['#ff9800',0],['#444',1],['#444',0],['#00e5ff',1]
+    ];
+    const tl = document.getElementById('tl');
+    intents.forEach(([c,changed]) => {
+      const d = document.createElement('div');
+      d.className = 'tl-cell';
+      d.style.background = c;
+      d.style.opacity = changed ? 1 : 0.5;
+      d.style.border = changed ? '2px solid #fff' : '2px solid transparent';
+      tl.appendChild(d);
+    });
+  </script>
+</body>
+</html>

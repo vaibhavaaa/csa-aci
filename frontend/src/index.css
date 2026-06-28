@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+/* ============================================================
+   CSA-ACI design tokens — glass / aurora (toned-down)
+   Solid accent colors stay hex so Tailwind alpha modifiers
+   (bg-cyan/10, text-good/70 …) compose correctly.
+   ============================================================ */
+@theme {
+  --color-bg: #07070f;
+  --color-ink: #eaeeff;
+  --color-muted: #8b95c9;
+  --color-faint: #5b6391;
+
+  --color-cyan: #00e5ff;
+  --color-violet: #a855f7;
+  --color-magenta: #ec4899;
+  --color-good: #00ff99;
+  --color-warn: #ffd740;
+  --color-orange: #ff9800;
+  --color-bad: #ff4444;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /* ── Fluid spacing — scales with viewport width via clamp(min, vw, max).
+     Generates real Tailwind utilities: px-shell, gap-stack, gap-tile, p-card …
+     On a small laptop the `vw` term shrinks → tight; on a wide monitor it
+     grows up to the cap → comfortable. No breakpoints needed. ── */
+  --spacing-shell: clamp(0.625rem, 1.1vw, 1.25rem);   /* page/header horizontal */
+  --spacing-shell-y: clamp(0.4rem, 0.7vw, 0.75rem);  /* page vertical */
+  --spacing-card: clamp(0.625rem, 0.8vw, 0.875rem);  /* card inner padding */
+  --spacing-stack: clamp(0.375rem, 0.7vw, 0.625rem); /* gaps between cards */
+  --spacing-stack-lg: clamp(0.625rem, 1vw, 1rem);    /* larger internal gaps */
+  --spacing-tile: clamp(0.25rem, 0.5vw, 0.4rem);     /* gaps inside KPI grids */
+}
+
+@layer base {
+  * { border-color: rgba(255, 255, 255, 0.08); }
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* slim, calm scrollbars */
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); background-clip: content-box; }
+}
+
+/* ============================================================
+   Aurora backdrop — subtle, very slow (toned down)
+   ============================================================ */
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 35%, #0c1030, #07070f 78%);
+}
+.aurora .blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(110px);
+  opacity: 0.18;
+  mix-blend-mode: screen;
+}
+.aurora .b1 { width: 620px; height: 620px; background: #00e5ff; top: -200px; left: -140px; animation: drift1 55s ease-in-out infinite; }
+.aurora .b2 { width: 540px; height: 540px; background: #a855f7; top: 18%; right: -180px; animation: drift2 64s ease-in-out infinite; }
+.aurora .b3 { width: 500px; height: 500px; background: #ec4899; bottom: -220px; left: 28%; opacity: 0.13; animation: drift3 72s ease-in-out infinite; }
+
+@keyframes drift1 { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(50px, 40px); } }
+@keyframes drift2 { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(-40px, 30px); } }
+@keyframes drift3 { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(35px, -40px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora .blob { animation: none; }
+}
+
+/* ============================================================
+   Glass surfaces
+   ============================================================ */
+@layer components {
+  .glass {
+    background: rgba(255, 255, 255, 0.045);
+    backdrop-filter: blur(14px) saturate(135%);
+    -webkit-backdrop-filter: blur(14px) saturate(135%);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+  .glass-soft {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .glass-inset {
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}
+
+@layer utilities {
+  .label-eyebrow {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--color-muted);
+  }
+}

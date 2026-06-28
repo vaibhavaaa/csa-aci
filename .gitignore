@@ -1,0 +1,59 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ENV/
+
+# ===== Node / frontend =====
+node_modules/
+dist/
+.vite/
+*.local
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# ===== Environment & secrets (NEVER commit real creds) =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+
+# ===== Claude Code config — internal, kept local, not published =====
+.claude/
+CLAUDE.md
+claude-md/
+
+# ===== OS / editor =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# ===== Large data — fetched/regenerated, not version-controlled =====
+# (also enforced by data/.gitignore; structure kept via .gitkeep)
+data/raw/
+data/processed/
+
+# ===== Personal / out-of-scope (kept locally, not published) =====
+resume.tex
+dashboard-redesign-variants/
+
+# Unpublished research — kept local, NOT public until the paper is published.
+paper/
+# Raw experiment iteration dumps — local only.
+artifacts/
+# Real k8s secrets manifest — only the *.example template is tracked.
+infra/deployment/secrets.yaml

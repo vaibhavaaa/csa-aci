@@ -1,0 +1,54 @@
+# HorizontalPodAutoscaler for the CSA-ACI backend
+#
+# THESIS NOTE:
+# This HPA is the deployment-layer proof of concept.
+# The CCE governance engine (csa_aci package) runs inside
+# the backend pods and governs intent-level decisions.
+# The HPA governs the number of pod replicas based on CPU.
+#
+# In a full production integration, the CCE would replace
+# or augment the HPA's scaling decisions — providing
+# intent-level governance above the HPA's reactive loop.
+# That integration is future work; this manifest proves
+# the deployment architecture is Kubernetes-native.
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    # Scale up when average CPU across all backend pods > 60%
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    # Scale up when average memory > 70%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30 # wait 30s before scaling up
+      policies:
+        - type: Pods
+          value: 1 # add 1 pod at a time
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 120 # wait 2 min before scaling down
+      policies:
+        - type: Pods
+          value: 1 # remove 1 pod at a time
+          periodSeconds: 60
