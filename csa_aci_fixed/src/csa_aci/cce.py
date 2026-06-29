@@ -35,7 +35,9 @@ STEP 3 — Signal-Age Dwell (Minimum Dwell Time)
   that IS dwell evidence. The correct design is: if you have been seeing consistent
   signal for min_dwell_time steps, switch. Evidence and dwell are unified.
 
-  Result: from clean state, SCALE_DOWN fires at step 10 (min_dwell_time), not 12.
+  Result: from clean state, SCALE_DOWN fires at step max(min_dwell_time,
+  evidence_window) — step 10 with the defaults (min_dwell_time=10 >=
+  evidence_window=8), not 12.
   Steps 1-9: signal_age building, HOLD
   Step 10: signal_age >= 10, evidence window full and passing → SCALE_DOWN
 
@@ -63,16 +65,17 @@ from collections import deque
 # -----------------------------------------------------------------
 
 class ArbitrationReason(str, Enum):
-    AGREEMENT            = "AGREEMENT"
-    CAPACITY_DEFERRED    = "CAPACITY_DEFERRED"
-    NETWORK_DEFERRED     = "NETWORK_DEFERRED"
-    SIGNAL_BUILDING      = "SIGNAL_BUILDING"      # evidence + dwell accumulating
+    # ── Conflict-arbitration stage (Step 1) — surfaced via CCEOutput.conflict_reason
+    AGREEMENT            = "AGREEMENT"            # both agents proposed the same intent
+    CAPACITY_DEFERRED    = "CAPACITY_DEFERRED"    # conflict resolved by deferring the capacity agent
+    NETWORK_DEFERRED     = "NETWORK_DEFERRED"     # conflict resolved by deferring the network agent
+    SAFETY_OVERRIDE      = "SAFETY_OVERRIDE"      # multi-signal safety override → SCALE_UP wins
+
+    # ── Evidence + dwell gate stage (Step 2) — surfaced via CCEOutput.arbitration_reason
     MIN_DWELL_BLOCK      = "MIN_DWELL_BLOCK"       # evidence ok, signal age not yet met
     EVIDENCE_REJECT      = "EVIDENCE_REJECT"       # window not full or not enough hits
     EVIDENCE_ACCEPT      = "EVIDENCE_ACCEPT"       # evidence ok + dwell met → switching
-    MINIMAL_INTERVENTION = "MINIMAL_INTERVENTION"
-    MAGNITUDE_CLAMP      = "MAGNITUDE_CLAMP"
-    EMERGENCY_OVERRIDE   = "EMERGENCY_OVERRIDE"    # latency >= critical threshold
+    EMERGENCY_OVERRIDE   = "EMERGENCY_OVERRIDE"    # latency/CPU >= critical threshold
 
 
 # -----------------------------------------------------------------
@@ -144,7 +147,8 @@ class CCEState:
 @dataclass
 class CCEOutput:
     final_intent:         str
-    arbitration_reason:   str
+    arbitration_reason:   str       # final/gate reason (evidence, dwell, emergency)
+    conflict_reason:      str       # Step-1 conflict-arbitration outcome (never overwritten)
     capacity_action_type: str
     capacity_action_mag:  float
     network_action_type:  str
@@ -166,8 +170,12 @@ class CognitiveConstraintEngine:
     The two key improvements over a simple reactive controller:
     1. Evidence gate: signal must be persistent across K readings
     2. Signal-age dwell: signal must have been consistent for min_dwell_time steps
-       Both are unified — signal_age counts from the first consistent reading,
-       so evidence and dwell are satisfied simultaneously at step min_dwell_time.
+       Both are unified — signal_age counts from the first consistent reading, so
+       a switch fires at step max(min_dwell_time, evidence_window). With the
+       defaults (min_dwell_time=10 >= evidence_window=8) that equals
+       min_dwell_time; if a config sets min_dwell_time < evidence_window the gate
+       must still wait for the window to fill. Sensitivity sweeps over these
+       params should therefore expect max(min_dwell_time, evidence_window).
     """
 
     def __init__(self, config: CCEConfig) -> None:
@@ -214,7 +222,7 @@ class CognitiveConstraintEngine:
                 and "SCALE_UP" in {capacity_intent, network_intent}
             ):
                 proposed_intent = "SCALE_UP"
-                arb_reason      = ArbitrationReason.MINIMAL_INTERVENTION.value
+                arb_reason      = ArbitrationReason.SAFETY_OVERRIDE.value
             else:
                 # Defer to non-HOLD agent
                 if capacity_intent == "HOLD" and network_intent != "HOLD":
@@ -232,6 +240,12 @@ class CognitiveConstraintEngine:
                         proposed_intent = network_intent
                         arb_reason      = ArbitrationReason.CAPACITY_DEFERRED.value
 
+        # Snapshot the Step-1 conflict-arbitration outcome before the evidence
+        # gate (below) can overwrite arb_reason. Without this, conflict
+        # resolution (deferral / safety override / agreement) is invisible in
+        # the output — the gate reason always wins. Surfaced as conflict_reason.
+        conflict_reason = arb_reason
+
         # ----------------------------------------------------------------
         # STEP 2 — Emergency Bypass
         # Fires BEFORE evidence gate. If latency is critical, skip everything.
@@ -247,8 +261,11 @@ class CognitiveConstraintEngine:
             )
         )
 
-        if emergency and proposed_intent != "SCALE_DOWN":
-            # System is failing — act immediately, no evidence or dwell needed
+        if emergency:
+            # System is failing — act immediately, no evidence or dwell needed.
+            # The emergency guarantee must hold regardless of the arbitrated
+            # direction: a critical latency/CPU reading always forces SCALE_UP,
+            # even if both agents propose SCALE_DOWN (defense in depth).
             final_intent   = "SCALE_UP"
             arb_reason     = ArbitrationReason.EMERGENCY_OVERRIDE.value
             intent_changed = final_intent != self.state.last_final_intent
@@ -258,7 +275,7 @@ class CognitiveConstraintEngine:
             self.state.signal_age        = self.cfg.min_dwell_time  # mark as satisfied
 
             return self._build_output(
-                final_intent, arb_reason, intent_changed,
+                final_intent, arb_reason, conflict_reason, intent_changed,
                 capacity_action_type, capacity_action_mag,
                 network_action_type,  network_action_mag,
             )
@@ -272,9 +289,10 @@ class CognitiveConstraintEngine:
         #   (a) evidence window has enough hits (quality check)
         #   (b) signal_age >= min_dwell_time (persistence check)
         #
-        # This unifies evidence and dwell into one counter. The system
-        # does NOT wait 8 steps THEN 10 more steps. It waits 10 steps total
-        # (min_dwell_time), during which time the evidence window also fills.
+        # This unifies evidence and dwell into one counter. The system does NOT
+        # wait evidence_window steps THEN min_dwell_time more steps; it waits
+        # max(min_dwell_time, evidence_window) steps total. With the defaults
+        # (10 >= 8) that is min_dwell_time, during which the window also fills.
         # ----------------------------------------------------------------
         if proposed_intent in ("SCALE_UP", "SCALE_DOWN"):
             # Update signal age
@@ -325,7 +343,7 @@ class CognitiveConstraintEngine:
         self.state.last_final_intent = final_intent
 
         return self._build_output(
-            final_intent, arb_reason, intent_changed,
+            final_intent, arb_reason, conflict_reason, intent_changed,
             capacity_action_type, capacity_action_mag,
             network_action_type,  network_action_mag,
         )
@@ -334,6 +352,7 @@ class CognitiveConstraintEngine:
         self,
         final_intent:         str,
         arb_reason:           str,
+        conflict_reason:      str,
         intent_changed:       bool,
         capacity_action_type: str,
         capacity_action_mag:  float,
@@ -377,6 +396,7 @@ class CognitiveConstraintEngine:
         return CCEOutput(
             final_intent          = final_intent,
             arbitration_reason    = arb_reason,
+            conflict_reason       = conflict_reason,
             capacity_action_type  = capacity_action_type,
             capacity_action_mag   = final_cap_mag,
             network_action_type   = network_action_type,
