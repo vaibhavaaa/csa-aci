@@ -21,6 +21,7 @@ echo "============================================"
 if [[ "$1" == "--down" ]]; then
     echo ""
     echo "[TEARDOWN] Removing all CSA-ACI resources..."
+    kubectl delete -f "$SCRIPT_DIR/monitoring/" --ignore-not-found
     kubectl delete -f "$SCRIPT_DIR/" --ignore-not-found
     echo "[TEARDOWN] Done. Cluster is clean."
     exit 0
@@ -104,6 +105,9 @@ echo "  ✓ nginx (NodePort 30080)"
 kubectl apply -f "$SCRIPT_DIR/hpa.yaml"
 echo "  ✓ HPA (backend: 2-6 replicas, CPU 60%)"
 
+kubectl apply -f "$SCRIPT_DIR/monitoring/"
+echo "  ✓ monitoring (Prometheus + Grafana, NodePort 30030)"
+
 # ── Wait for pods ──────────────────────────────────────────────────────────────
 echo ""
 echo "[4/6] Waiting for pods to be ready..."
@@ -158,8 +162,12 @@ echo "  http://$MINIKUBE_IP:30080"
 echo ""
 echo "  Or run: minikube service nginx-service"
 echo ""
+echo "  Grafana dashboard: http://$MINIKUBE_IP:30030  (anon viewer; admin/admin)"
+echo "                     or run: minikube service grafana-service"
+echo ""
 echo "  Check pod status:  kubectl get pods"
 echo "  Check HPA:         kubectl get hpa"
+echo "  Prometheus targets: kubectl port-forward svc/prometheus-service 9090:9090"
 echo "  Backend logs:      kubectl logs -l app=backend -f"
 echo ""
 echo "  To tear down:      bash deploy.sh --down"

@@ -1,0 +1,82 @@
+name: CD
+
+# Manual deploy to a Kubernetes cluster using the images that CI published to
+# GHCR. This is intentionally gated and NOT automatic:
+#
+#   * Trigger it by hand from the Actions tab (workflow_dispatch).
+#   * It deploys only if a `KUBECONFIG` repo secret is present (base64-encoded
+#     kubeconfig). With no cluster wired up it cleanly no-ops, so it never
+#     reports a fake "deployed" — it's honest scaffolding, ready to point at a
+#     real cluster.
+#   * The cluster must already hold the `csa-aci-secrets` Secret (provisioned
+#     out-of-band — never committed). This workflow does NOT apply secrets.
+#
+# To enable: add a KUBECONFIG secret, then run this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy"
+        required: false
+        default: latest
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — require a KUBECONFIG secret
+        id: guard
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG }}
+        run: |
+          if [ -z "$KUBECONFIG_DATA" ]; then
+            echo "::warning::No KUBECONFIG secret set — skipping deploy (expected until a cluster is wired up)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure kubectl
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_DATA" | base64 -d > "$HOME/.kube/config"
+          echo "KUBECONFIG=$HOME/.kube/config" >> "$GITHUB_ENV"
+
+      - name: Deploy manifests + roll out GHCR images
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          IMG: ghcr.io/${{ github.repository }}
+          TAG: ${{ github.event.inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          # Apply everything except the Secret (the cluster provisions that
+          # out-of-band — we never apply the placeholder template).
+          kubectl apply \
+            -f infra/deployment/postgres.yaml \
+            -f infra/deployment/redis.yaml \
+            -f infra/deployment/backend.yaml \
+            -f infra/deployment/frontend.yaml \
+            -f infra/deployment/nginx.yaml \
+            -f infra/deployment/hpa.yaml
+          kubectl apply -f infra/deployment/monitoring/
+
+          # Point the Deployments at the freshly published GHCR images. The base
+          # manifests use local Minikube images with pullPolicy=Never, so also
+          # flip the policy to Always for a real registry pull.
+          kubectl set image deployment/backend  backend="${IMG}-backend:${TAG}"
+          kubectl set image deployment/frontend frontend="${IMG}-frontend:${TAG}"
+          kubectl patch deployment backend  -p '{"spec":{"template":{"spec":{"containers":[{"name":"backend","imagePullPolicy":"Always"}]}}}}'
+          kubectl patch deployment frontend -p '{"spec":{"template":{"spec":{"containers":[{"name":"frontend","imagePullPolicy":"Always"}]}}}}'
+
+          kubectl rollout status deployment/backend  --timeout=180s
+          kubectl rollout status deployment/frontend --timeout=180s

@@ -16,6 +16,7 @@ Write-Host "Project root: $ProjectRoot"
 # Tear down
 if ($Down) {
     Write-Host "Removing all CSA-ACI resources..." -ForegroundColor Yellow
+    kubectl delete -f "$ScriptDir\monitoring\" --ignore-not-found
     kubectl delete -f "$ScriptDir\" --ignore-not-found
     Write-Host "Done." -ForegroundColor Green
     exit 0
@@ -74,6 +75,9 @@ Write-Host "nginx applied" -ForegroundColor Green
 kubectl apply -f "$ScriptDir\hpa.yaml"
 Write-Host "hpa applied" -ForegroundColor Green
 
+kubectl apply -f "$ScriptDir\monitoring\"
+Write-Host "monitoring (Prometheus + Grafana) applied" -ForegroundColor Green
+
 # Step 4 - Wait for pods
 Write-Host ""
 Write-Host "[4/6] Waiting for pods (2-3 minutes)..." -ForegroundColor White
@@ -112,11 +116,13 @@ Write-Host ""
 Write-Host "[6/6] Deployment complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Dashboard: http://${ip}:30080" -ForegroundColor Cyan
+Write-Host "Grafana:   http://${ip}:30030  (anon viewer; admin/admin)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Useful commands:"
 Write-Host "  kubectl get pods"
 Write-Host "  kubectl get hpa"
 Write-Host "  kubectl logs -l app=backend -f"
+Write-Host "  kubectl port-forward svc/prometheus-service 9090:9090"
 Write-Host "  minikube dashboard"
 Write-Host "  minikube service nginx-service"
 Write-Host ""

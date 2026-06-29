@@ -4,6 +4,7 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.database import Base, engine
 from app.core.config import ALLOWED_ORIGINS
@@ -74,7 +75,18 @@ app.include_router(auth_router)
 app.include_router(task_router)
 app.include_router(ws_router)
 
+# Expose Prometheus metrics at /metrics (HTTP request latency/count/size
+# histograms). Scraped by the in-cluster Prometheus — see
+# infra/deployment/monitoring/. Instrument here, after routers are mounted.
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
 
 @app.get("/")
 def root():
     return {"status": "running"}
+
+
+@app.get("/healthz")
+def healthz():
+    """Liveness/readiness probe target (see infra/deployment manifests)."""
+    return {"status": "ok"}

@@ -20,6 +20,9 @@ python-multipart==0.0.20
 pydantic==2.11.5
 python-dotenv==1.0.1
 
+# ── Observability (Prometheus /metrics) ──
+prometheus-fastapi-instrumentator==8.0.2
+
 # ── Redis (WebSocket pub/sub) + task queue ──
 redis[asyncio]==7.4.0
 rq==2.8.0
