@@ -37,22 +37,28 @@ async def lifespan(app: FastAPI):
     # ── startup ──────────────────────────────────────────────────────
     Base.metadata.create_all(bind=engine)
 
-    await manager.connect_redis()
+    redis_ok = await manager.connect_redis()
 
-    listener_task = asyncio.create_task(
-        redis_listener(),
-        name="redis_listener",
-    )
-    logger.info("Redis pub/sub listener started.")
+    # Only run the pub/sub listener when Redis is actually available. In
+    # single-instance dev without Redis, publish() broadcasts in-process, so the
+    # listener would just error-loop with nothing to subscribe to — skip it.
+    listener_task = None
+    if redis_ok:
+        listener_task = asyncio.create_task(
+            redis_listener(),
+            name="redis_listener",
+        )
+        logger.info("Redis pub/sub listener started.")
 
     yield  # app runs here
 
     # ── shutdown ─────────────────────────────────────────────────────
-    listener_task.cancel()
-    try:
-        await listener_task
-    except asyncio.CancelledError:
-        pass  # expected — listener exits cleanly on cancel
+    if listener_task is not None:
+        listener_task.cancel()
+        try:
+            await listener_task
+        except asyncio.CancelledError:
+            pass  # expected — listener exits cleanly on cancel
 
     await manager.disconnect_redis()
     logger.info("Application shutdown complete.")

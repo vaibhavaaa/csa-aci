@@ -138,17 +138,46 @@ CI deploy smoke test (see [Deployment, CI/CD & observability](#deployment-cicd--
 
 ### Local dev (without Docker)
 
+The backend needs three things: the `csa_aci` package importable (via `PYTHONPATH`,
+not pip — see the package rule), a `DATABASE_URL`, and a `SECRET_KEY`. **Redis is
+optional in development** — with no Redis running, the backend logs a warning and
+falls back to single-instance, in-process WebSocket broadcast (in production a missing
+Redis still fails fast).
+
 ```bash
-# Backend  (Python 3.9+).  Tests fall back to an in-memory SQLite, no DB needed.
+# ---- Backend (Python 3.9+) ----
 cd backend
 pip install -r requirements.txt
-pip install -e ../csa_aci_fixed         # installs the csa_aci package
-uvicorn app.main:app --reload           # http://localhost:8000
 
-# Frontend
+export DATABASE_URL="sqlite:///./dev.db"      # file SQLite — no Postgres needed
+export SECRET_KEY="dev-only-change-me"         # any value works in dev
+export PYTHONPATH="../csa_aci_fixed/src"       # makes the csa_aci package importable
+
+uvicorn app.main:app --reload                  # http://localhost:8000
+# If port 8000 is already taken, pick another:  uvicorn app.main:app --port 8010
+```
+
+```powershell
+# Windows PowerShell — same env vars:
+$env:DATABASE_URL = "sqlite:///./dev.db"; $env:SECRET_KEY = "dev-only-change-me"; $env:PYTHONPATH = "../csa_aci_fixed/src"
+uvicorn app.main:app --reload
+```
+
+```bash
+# ---- Frontend ----
 cd frontend
 npm install
-npm run dev                             # http://localhost:5173
+npm run dev                                    # http://localhost:5173
+# If the backend isn't on :8000, point the dev proxy at it:
+# VITE_DEV_BACKEND=http://localhost:8010 npm run dev
+```
+
+The endpoints are JWT-protected, so register an account once, then log in at
+**http://localhost:5173**:
+
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" -d '{"username":"demo","password":"demo1234"}'
 ```
 
 ### Run the tests

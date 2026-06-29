@@ -28,7 +28,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 from fastapi import WebSocket
 
-from app.core.config import REDIS_URL
+from app.core.config import REDIS_URL, ENV
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +50,40 @@ class ConnectionManager:
     # Redis lifecycle — called from app lifespan in main.py
     # ------------------------------------------------------------------
 
-    async def connect_redis(self) -> None:
-        """Open the async Redis connection.  Called once at app startup."""
-        self._redis = aioredis.from_url(
+    async def connect_redis(self) -> bool:
+        """Open the async Redis connection.  Called once at app startup.
+
+        Returns True when Redis is reachable. In production an unreachable or
+        misconfigured Redis fails fast (raises). In development it degrades to
+        single-instance mode — ``publish()`` falls back to in-process broadcast —
+        so the stack runs without a Redis server (see the module docstring).
+        """
+        client = aioredis.from_url(
             REDIS_URL,
             encoding="utf-8",
             decode_responses=True,
         )
-        # Verify the connection is alive immediately so a misconfigured
-        # REDIS_URL surfaces at startup rather than at first broadcast.
-        await self._redis.ping()
+        try:
+            # Verify the connection is alive immediately so a misconfigured
+            # REDIS_URL surfaces at startup rather than at first broadcast.
+            await client.ping()
+        except Exception as exc:
+            if ENV == "production":
+                raise
+            logger.warning(
+                "Redis unavailable (%s) — running single-instance dev mode; "
+                "WebSocket events are broadcast in-process only.", exc,
+            )
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+            self._redis = None
+            return False
+
+        self._redis = client
         logger.info("Redis connected: %s", REDIS_URL)
+        return True
 
     async def disconnect_redis(self) -> None:
         """Close the async Redis connection.  Called once at app shutdown."""

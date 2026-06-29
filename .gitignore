@@ -11,6 +11,11 @@ venv/
 env/
 ENV/
 
+# ===== Local dev SQLite DBs (created by the local-dev quickstart) =====
+*.db
+*.sqlite
+*.sqlite3
+
 # ===== Node / frontend =====
 node_modules/
 dist/
