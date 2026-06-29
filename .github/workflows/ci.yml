@@ -201,4 +201,9 @@ jobs:
         run: |
           kubectl get pods -o wide || true
           kubectl describe pods || true
-          kubectl logs -l app=backend --tail=120 || true
+          for app in backend frontend nginx prometheus grafana; do
+            echo "===== logs: app=$app (current) ====="
+            kubectl logs -l "app=$app" --tail=120 --all-containers || true
+            echo "===== logs: app=$app (previous, if crashed) ====="
+            kubectl logs -l "app=$app" --tail=120 --all-containers --previous || true
+          done

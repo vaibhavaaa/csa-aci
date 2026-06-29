@@ -1,3 +1,27 @@
+# In Kubernetes the dedicated cluster nginx (nginx.yaml) handles all API/WS
+# proxying, so the frontend pod only needs to serve the static build. The
+# image bakes a docker-compose-specific nginx config that proxies to the
+# `csa_backend` host — which does not exist in k8s and crashes nginx at startup
+# ("host not found in upstream"). This ConfigMap overrides it with a
+# static-only server, leaving the image (and its compose behavior) untouched.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-nginx-config
+  namespace: default
+data:
+  default.conf: |
+    server {
+        listen 5173;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,6 +61,13 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "300m"
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: frontend-nginx-config
 
 ---
 apiVersion: v1
