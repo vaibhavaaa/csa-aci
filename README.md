@@ -99,7 +99,7 @@ footnote.
         PostgreSQL (one row per CCE decision)   ·   Redis (WebSocket pub/sub)
 ```
 
-**Stack:** FastAPI · PostgreSQL · Redis · React + Vite · Recharts · Docker · Kubernetes
+**Stack:** FastAPI · PostgreSQL · Redis · React + Vite · Recharts · Docker · Kubernetes · Prometheus · Grafana · GitHub Actions
 Core engine is the standalone Python package **`csa_aci`** (source in
 [`csa_aci_fixed/src/csa_aci/`](csa_aci_fixed/src/csa_aci/)).
 
@@ -122,6 +122,18 @@ Then open:
 - **Interactive API docs** → http://localhost:8000/docs  (FastAPI / Swagger; endpoints
   are JWT-protected — authenticate there)
 
+### Deploy to Kubernetes (Minikube)
+
+```bash
+# Builds images into Minikube, applies every manifest + the monitoring stack,
+# waits for rollout, runs the DB migration.  Use --down to tear it all back down.
+bash infra/deployment/deploy.sh          # Windows: infra/deployment/deploy.ps1
+```
+
+Then open the **dashboard** at `http://$(minikube ip):30080` and **Grafana** at
+`http://$(minikube ip):30030`. The same manifests are exercised on every push by the
+CI deploy smoke test (see [Deployment, CI/CD & observability](#deployment-cicd--observability)).
+
 ### Local dev (without Docker)
 
 ```bash
@@ -141,7 +153,7 @@ npm run dev                             # http://localhost:5173
 
 ```bash
 cd backend
-pytest                                  # CCE invariants + research harness + app import
+pytest                                  # CCE invariants · research harness · app import · observability
 ```
 
 ---
@@ -165,6 +177,34 @@ exposed as an endpoint under `/tasks`:
 All experiment logic lives in
 [`backend/app/services/supervisor_engine.py`](backend/app/services/supervisor_engine.py).
 
+---
+
+## Deployment, CI/CD & observability
+
+**CI/CD** ([`.github/workflows/`](.github/workflows/)) runs on every push to `main`:
+
+- **Tests** — backend `pytest` on Python 3.11 + 3.12; frontend ESLint + Vite build.
+- **Images** — builds the backend and frontend images and publishes them to the GitHub
+  Container Registry (`ghcr.io/vaibhavaaa/csa-aci-{backend,frontend}`).
+- **Deploy smoke test** — stands up an ephemeral **kind** Kubernetes cluster, deploys
+  the *full* manifest set, and verifies it end-to-end: every workload rolls out Ready,
+  the backend serves `/healthz` + `/metrics`, and Prometheus is actually scraping the
+  backend. So the manifests are proven to deploy on every push — no external cluster
+  needed.
+- **CD** ([`cd.yml`](.github/workflows/cd.yml)) — a manual, gated deploy to a *real*
+  cluster via a `KUBECONFIG` secret. It cleanly no-ops until a cluster is wired up, so
+  it never reports a fake "deployed".
+
+**Observability** ([`infra/deployment/monitoring/`](infra/deployment/monitoring/)) — the
+backend exposes Prometheus metrics at `/metrics`; an in-cluster Prometheus (annotation-
+based pod discovery, no Operator/CRDs — runs on plain Minikube) scrapes it, and Grafana
+ships a provisioned **"CSA-ACI Backend"** dashboard (request rate, p95 latency, per-handler
+rate) on NodePort `30030`.
+
+**Config & secrets** — 12-factor via env (`.env.example`); k8s Secrets templated as
+`secrets.example.yaml` (real values never committed). `SECRET_KEY` is required when
+`ENV=production` (the app refuses to start without it).
+
 ### Real traces
 Three datasets load as `source == "real"`: **Google Cluster**, **Wikipedia
 projectviews**, and a **measured** wall-clock-latency trace. Raw/processed data is
@@ -178,10 +218,11 @@ are never silently mislabelled.
 
 ```
 csa_aci_fixed/   Core CCE algorithm + Supervisor (the csa_aci Python package)
-backend/         FastAPI service, experiment harness, tests
+backend/         FastAPI service (incl. /metrics, /healthz), experiment harness, tests
 frontend/        React + Vite dashboard (multi-page, glass UI)
-infra/           docker-compose + Kubernetes manifests (incl. HPA baseline)
+infra/           docker-compose + Kubernetes manifests (HPA + Prometheus/Grafana) + deploy scripts
 data/            Real-trace loaders (raw/processed data fetched, not tracked)
+.github/         CI/CD workflows (tests · GHCR images · kind deploy smoke test · gated CD)
 ```
 
 ---
