@@ -111,3 +111,94 @@ jobs:
             ghcr.io/${{ github.repository }}-frontend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Real deployment verification: spin up an ephemeral kind (Kubernetes-in-
+  # Docker) cluster on the runner, deploy the FULL manifest set, and smoke-test
+  # that the app rolls out, serves /healthz + /metrics, and that Prometheus is
+  # actually scraping the backend. This proves the k8s manifests + CD path work
+  # end-to-end with no external cluster or cloud creds.
+  deploy-kind:
+    name: Deploy smoke test (kind)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t csa-aci-backend:latest .
+
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile -t csa-aci-frontend:latest frontend
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: csa-test
+
+      - name: Load images into the cluster
+        run: |
+          kind load docker-image csa-aci-backend:latest  --name csa-test
+          kind load docker-image csa-aci-frontend:latest --name csa-test
+
+      - name: Create app secret (ephemeral test values)
+        run: |
+          kubectl create secret generic csa-aci-secrets \
+            --from-literal=POSTGRES_USER=csa_user \
+            --from-literal=POSTGRES_PASSWORD=csa_pass \
+            --from-literal=POSTGRES_DB=csa_db \
+            --from-literal=DATABASE_URL=postgresql://csa_user:csa_pass@postgres-service:5432/csa_db \
+            --from-literal=REDIS_URL=redis://redis-service:6379 \
+            --from-literal=SECRET_KEY=$(openssl rand -hex 32) \
+            --from-literal=ALGORITHM=HS256 \
+            --from-literal=ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+      - name: Deploy data layer (postgres + redis)
+        run: |
+          kubectl apply -f infra/deployment/postgres.yaml
+          kubectl apply -f infra/deployment/redis.yaml
+          kubectl rollout status statefulset/postgres --timeout=180s
+          kubectl rollout status deployment/redis --timeout=120s
+
+      - name: Deploy app, ingress, HPA, and monitoring
+        run: |
+          kubectl apply -f infra/deployment/backend.yaml
+          kubectl apply -f infra/deployment/frontend.yaml
+          kubectl apply -f infra/deployment/nginx.yaml
+          kubectl apply -f infra/deployment/hpa.yaml
+          kubectl apply -f infra/deployment/monitoring/
+          kubectl rollout status deployment/backend    --timeout=240s
+          kubectl rollout status deployment/frontend   --timeout=180s
+          kubectl rollout status deployment/nginx      --timeout=120s
+          kubectl rollout status deployment/prometheus --timeout=120s
+          kubectl rollout status deployment/grafana    --timeout=120s
+
+      - name: Smoke test — backend /healthz and /metrics
+        run: |
+          kubectl port-forward svc/backend-service 8000:8000 &
+          PF=$!; sleep 5
+          curl -fsS http://localhost:8000/healthz | grep -q '"status":"ok"'
+          curl -fsS http://localhost:8000/metrics | grep -q 'http_request'
+          kill $PF
+
+      - name: Smoke test — Prometheus is scraping the backend (up)
+        run: |
+          kubectl port-forward svc/prometheus-service 9090:9090 &
+          PF=$!; sleep 5
+          ok=
+          for i in $(seq 1 18); do
+            if curl -fsS http://localhost:9090/api/v1/targets \
+                 | jq -e '[.data.activeTargets[] | select(.labels.app=="backend" and .health=="up")] | length > 0' >/dev/null; then
+              ok=1; break
+            fi
+            sleep 5
+          done
+          kill $PF
+          if [ -z "$ok" ]; then echo "backend target never came up in Prometheus"; exit 1; fi
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          kubectl get pods -o wide || true
+          kubectl describe pods || true
+          kubectl logs -l app=backend --tail=120 || true
