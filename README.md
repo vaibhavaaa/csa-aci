@@ -40,8 +40,10 @@ takes the raw per-signal intents and gates them down to one safe, explainable ac
 4. **Magnitude-Bounded Execution** — the executed action is clamped so a single
    decision can't over-correct.
 
-Every decision is logged with its `final_intent`, `reason`, a `trust_score`
-(internal proxy), and a conflict flag — so the *why* is always inspectable.
+Every decision is logged with its `final_intent`, `reason` (the final gate
+outcome), `conflict_reason` (how a conflict was arbitrated, kept separate so it's
+never overwritten), a `trust_score` (internal proxy), and a conflict flag — so the
+*why* is always inspectable.
 
 ### Operating guarantees
 The governor ships with **checkable** guarantees (e.g. emergency override always
@@ -224,6 +226,37 @@ infra/           docker-compose + Kubernetes manifests (HPA + Prometheus/Grafana
 data/            Real-trace loaders (raw/processed data fetched, not tracked)
 .github/         CI/CD workflows (tests · GHCR images · kind deploy smoke test · gated CD)
 ```
+
+---
+
+## Hardening & code review (ECC-assisted)
+
+The CCE engine and the dashboard's reason contract were recently audited and hardened
+using the review and test-driven workflow patterns from **ECC — "Everything Claude
+Code"** (<https://github.com/affaan-m/ECC>), an agent-harness operating system of
+reusable review agents, skills, and TDD/verification workflows. Two patterns were
+applied directly here: ECC's `python-reviewer` / `code-review` lens — *check the code
+against the project's own rule files and cross-file contracts* — and its
+`tdd-workflow` — *reproduce each issue with a failing test (RED), fix, then lock the
+behavior in (GREEN)*.
+
+**What it surfaced and fixed:**
+
+| Area | Issue found | Fix |
+|---|---|---|
+| Emergency override | The ≥300 ms / ≥95 % CPU emergency override was silently skipped when arbitration resolved to `SCALE_DOWN`, so the "always force `SCALE_UP`" guarantee could be violated. | Override now fires on any critical reading regardless of arbitrated direction. Pinned by two new invariant tests. |
+| Telemetry contract | Conflict-resolution reasons (`CAPACITY_DEFERRED` / `NETWORK_DEFERRED` / safety override) were computed, then overwritten by the evidence gate — so *how* a conflict resolved never reached the output. | Added a separate, never-overwritten `conflict_reason` on `CCEOutput` / `StepRecord` / `GovernanceDecision`. Existing `arbitration_reason` values are unchanged → **no metric drift**. |
+| Reason vocabulary | Two enum values were dead (never emitted) and the multi-signal safety override was mislabeled. | Removed dead values; renamed the safety reason to `SAFETY_OVERRIDE`. Every enum value is now reachable. |
+| Frontend ↔ backend drift | The dashboard's reason→colour map listed reasons the backend never emits and omitted ones it does (silent grey fallback). | `REASON_COLORS` now mirrors the backend `ArbitrationReason` enum exactly. |
+| Docs accuracy | The "unified evidence + dwell" docstring held only when `min_dwell_time ≥ evidence_window`. | Corrected to the actual `max(min_dwell_time, evidence_window)` relationship (matters for the sensitivity sweep). |
+
+**How ECC helped:** it turned an ad-hoc "look it over" into a repeatable loop —
+review the engine against this repo's own rule files, prove each issue with a failing
+test, fix, and re-verify. That loop is what caught the emergency-override and
+telemetry-contract bugs a single-file read would miss. Every fix is verified: the
+backend suite is green (incl. four new invariant tests), an enumeration probe confirms
+zero dead reason values, and the `arbitration_reason` output is byte-for-byte
+unchanged so published metrics are unaffected. ECC: <https://github.com/affaan-m/ECC>
 
 ---
 

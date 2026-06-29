@@ -60,6 +60,49 @@ def test_emergency_override_acts_in_one_step():
     assert rec.arbitration_reason == "EMERGENCY_OVERRIDE"
 
 
+def _step_cpu(sup, latency, cpu, cap_intent, net_intent, step=0):
+    """Like _step but with an explicit CPU reading (for CPU-emergency cases)."""
+    tel = TelemetrySnapshot(
+        observed_latency=latency,
+        cpu_utilisation=cpu,
+        throughput=300.0,
+        timestamp=step,
+    )
+    return sup.step(
+        telemetry=tel,
+        capacity_intent=cap_intent,
+        capacity_intent_age=0,
+        capacity_action_type="CAPACITY_SCALE" if cap_intent == "SCALE_UP" else "NO_OP",
+        capacity_action_mag=1.0 if cap_intent == "SCALE_UP" else 0.0,
+        network_intent=net_intent,
+        network_intent_age=0,
+        network_action_type="NETWORK_THROTTLE" if net_intent == "SCALE_DOWN" else "NO_OP",
+        network_action_mag=-1.0 if net_intent == "SCALE_DOWN" else 0.0,
+    )
+
+
+# ── Invariant 3b: the emergency guarantee must NOT depend on agent behaviour.
+#    Per csa_aci_package.md: "Emergency override (>=300ms) must bypass BOTH the
+#    evidence gate and dwell time" and force SCALE_UP. If both agents (wrongly)
+#    propose SCALE_DOWN during a latency crisis, the governor must still act.
+#    Exercises the guard at cce.py:250.
+def test_emergency_latency_overrides_even_when_agents_say_scale_down():
+    sup = Supervisor()
+    rec = _step(sup, latency=350, cap_intent="SCALE_DOWN", net_intent="SCALE_DOWN")
+    assert rec.final_intent == "SCALE_UP"
+    assert rec.arbitration_reason == "EMERGENCY_OVERRIDE"
+
+
+# ── Invariant 3c: same guarantee for the CPU emergency trigger (>=0.95).
+#    A critical CPU reading must force SCALE_UP regardless of arbitrated
+#    direction. Exercises the CPU branch at cce.py:244-250.
+def test_emergency_cpu_overrides_even_when_agents_say_scale_down():
+    sup = Supervisor()
+    rec = _step_cpu(sup, latency=40, cpu=0.97, cap_intent="SCALE_DOWN", net_intent="SCALE_DOWN")
+    assert rec.final_intent == "SCALE_UP"
+    assert rec.arbitration_reason == "EMERGENCY_OVERRIDE"
+
+
 # ── Invariant 4: sustained high load eventually switches to SCALE_UP ────────
 def test_sustained_high_load_switches_up():
     sup = Supervisor()
@@ -83,6 +126,32 @@ def test_intervention_distance_non_negative_and_bounded():
         assert rec.intervention_distance >= 0.0
         # trust-score normalisation assumes worst case ~5.0
         assert rec.intervention_distance <= 5.0
+
+
+# ── Invariant 6: the Step-1 conflict-arbitration outcome is preserved in
+#    conflict_reason even when the evidence gate overwrites arbitration_reason.
+#    Without this, multi-signal conflict resolution is invisible in telemetry.
+def test_conflict_reason_preserved_through_gate():
+    # capacity HOLD, network SCALE_DOWN, calm latency → resolved by deferring
+    # the capacity agent; the gate then rejects (window not full this step).
+    sup = Supervisor()
+    rec = _step(sup, latency=50, cap_intent="HOLD", net_intent="SCALE_DOWN")
+    assert rec.conflict_reason == "CAPACITY_DEFERRED"    # arbitration outcome kept
+    assert rec.arbitration_reason == "EVIDENCE_REJECT"   # gate outcome is final
+
+    # other direction: network HOLD, capacity SCALE_UP, latency below the 100ms
+    # safety-override threshold → resolved by deferring the network agent.
+    sup2 = Supervisor()
+    rec2 = _step(sup2, latency=50, cap_intent="SCALE_UP", net_intent="HOLD")
+    assert rec2.conflict_reason == "NETWORK_DEFERRED"
+
+
+# ── Invariant 6b: the multi-signal safety override is recorded as a distinct
+#    conflict_reason (not mislabeled, not lost behind the gate outcome).
+def test_safety_override_recorded_as_conflict_reason():
+    sup = Supervisor()
+    rec = _step(sup, latency=150, cap_intent="SCALE_UP", net_intent="HOLD")
+    assert rec.conflict_reason == "SAFETY_OVERRIDE"
 
 
 # ── CSI metric: label thresholds ────────────────────────────────────────────

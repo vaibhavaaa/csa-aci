@@ -28,6 +28,7 @@ class AgentIO:
 class GovernanceDecision:
     final_intent:          str
     arbitration_reason:    str
+    conflict_reason:       str
 
     capacity_action_type:  str
     capacity_action_mag:   float
@@ -71,6 +72,7 @@ class CSAACI:
         return GovernanceDecision(
             final_intent          = out.final_intent,
             arbitration_reason    = out.arbitration_reason,
+            conflict_reason       = out.conflict_reason,
             capacity_action_type  = out.capacity_action_type,
             capacity_action_mag   = out.capacity_action_mag,
             network_action_type   = out.network_action_type,

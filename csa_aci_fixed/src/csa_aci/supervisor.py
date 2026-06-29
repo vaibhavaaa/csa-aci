@@ -33,6 +33,7 @@ class StepRecord:
     network_intent:       str
     final_intent:         str
     arbitration_reason:   str
+    conflict_reason:      str
     intent_changed:       bool
     final_intent_age:     int
     intervention_distance: float
@@ -110,6 +111,7 @@ class Supervisor:
             network_intent        = network_intent,
             final_intent          = out.final_intent,
             arbitration_reason    = out.arbitration_reason,
+            conflict_reason       = out.conflict_reason,
             intent_changed        = out.intent_changed,
             final_intent_age      = out.final_intent_age,
             intervention_distance = out.intervention_distance,
