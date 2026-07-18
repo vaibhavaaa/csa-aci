@@ -43,11 +43,9 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 5173
-          env:
-            - name: VITE_API_URL
-              value: "http://localhost/api"
-            - name: VITE_WS_URL
-              value: "ws://localhost/ws"
+          # No VITE_* env here on purpose: Vite bakes env vars into the bundle at
+          # BUILD time, so runtime env on this nginx container is inert. The build
+          # defaults to same-origin paths, which the cluster nginx proxies correctly.
           readinessProbe:
             httpGet:
               path: /

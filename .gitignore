@@ -53,6 +53,8 @@ dashboard-redesign-variants/
 
 # Unpublished research — kept local, NOT public until the paper is published.
 paper/
+MENTOR_LOG.md
+IDEAS.md
 # Raw experiment iteration dumps — local only.
 artifacts/
 # Real k8s secrets manifest — only the *.example template is tracked.
