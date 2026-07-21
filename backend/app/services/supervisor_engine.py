@@ -14,10 +14,18 @@ NOTE — per_step_trust formula:
     the thesis.  For cross-run comparisons use CSI and TrustDecayModel
     instead — those are the citable metrics.
 """
+import redis 
+import json
+import os
+
+
+redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
 
 from csa_aci import Supervisor, TelemetrySnapshot
 from csa_aci.agents import CapacityAgent, NetworkAgent
 from csa_aci import compute_csi, TrustDecayModel
+
+
 
 # Max expected intervention distance used to normalise per-step trust.
 # Empirical: capacity_mag clamped to 1.0 + network_mag clamped to 1.0
@@ -54,55 +62,83 @@ def run_supervised_task(
     throughput: float = 0.0,
 ):
     """
-    Creates a fresh Supervisor per call — no shared state between requests.
-    Agents observe the provided telemetry and propose intents.
-    CCE governs the final decision.
+    Acquires Redis lock, loads shared state, runs CCE, saves state back.
+    Ensures multi-replica consistency: only one pod makes decisions at a time.
     """
     global _live_sup, _live_cap, _live_net
-    sup = _live_sup
-    cap = _live_cap
-    net = _live_net
+    
+    # Acquire lock: only one pod decides at a time
+    lock_key = "cce:lock"
+    lock = redis_client.lock(lock_key, timeout=10, blocking=True)
+    lock.acquire()
+    
+    try:
+        # Load shared state from Redis
+        state_json = redis_client.get("cce:state")
+        if state_json:
+            state_dict = json.loads(state_json)
+            _live_sup.engine.state.recent_latency = state_dict.get("recent_latency", [])
+            _live_sup.engine.state.recent_cpu = state_dict.get("recent_cpu", [])
+            _live_sup.engine.state.signal_age = state_dict.get("signal_age", 0)
+            _live_sup.engine.state.pending_direction = state_dict.get("pending_direction", None)
+        
+        sup = _live_sup
+        cap = _live_cap
+        net = _live_net
 
-    telemetry = TelemetrySnapshot(
-        observed_latency=observed_latency,
-        cpu_utilisation=cpu_utilisation,
-        throughput=throughput,
-    )
+        telemetry = TelemetrySnapshot(
+            observed_latency=observed_latency,
+            cpu_utilisation=cpu_utilisation,
+            throughput=throughput,
+        )
 
-    cap_intent, cap_action = cap.step(telemetry, None)
-    net_intent, net_action = net.step(telemetry, None)
+        cap_intent, cap_action = cap.step(telemetry, None)
+        net_intent, net_action = net.step(telemetry, None)
 
-    record = sup.step(
-        telemetry=telemetry,
-        capacity_intent=cap_intent.value,
-        capacity_intent_age=cap.intent_age,
-        capacity_action_type=cap_action,
-        capacity_action_mag=1.0 if cap_intent.value == "SCALE_UP" else 0.0,
-        network_intent=net_intent.value,
-        network_intent_age=net.intent_age,
-        network_action_type=net_action,
-        network_action_mag=-1.0 if net_intent.value == "SCALE_DOWN" else 0.0,
-    )
+        record = sup.step(
+            telemetry=telemetry,
+            capacity_intent=cap_intent.value,
+            capacity_intent_age=cap.intent_age,
+            capacity_action_type=cap_action,
+            capacity_action_mag=1.0 if cap_intent.value == "SCALE_UP" else 0.0,
+            network_intent=net_intent.value,
+            network_intent_age=net.intent_age,
+            network_action_type=net_action,
+            network_action_mag=-1.0 if net_intent.value == "SCALE_DOWN" else 0.0,
+        )
 
-    summary = sup.summary()
+        summary = sup.summary()
 
-    return {
-        "task": task_name,
-        "observed_latency": observed_latency,
-        "capacity_agent": cap_intent.value,
-        "network_agent": net_intent.value,
-        "final_intent": record.final_intent,
-        "reason": record.arbitration_reason,
-        "intent_changed": record.intent_changed,
-        "intent_age": record.final_intent_age,
-        "intervention_distance": record.intervention_distance,
-        "trust_score": _per_step_trust(record.intervention_distance),
-        "summary": summary,
-        "window_size": len(_live_sup.engine.state.recent_latency),
-        "window_contents": list(_live_sup.engine.state.recent_latency)[-8:],
-        "signal_age": _live_sup.engine.state.signal_age,
-        "signal_needed": _live_sup.engine.cfg.min_dwell_time,
-    }
+        # Save state back to Redis
+        state_to_save = {
+            "recent_latency": _live_sup.engine.state.recent_latency,
+            "recent_cpu": _live_sup.engine.state.recent_cpu,
+            "signal_age": _live_sup.engine.state.signal_age,
+            "pending_direction": _live_sup.engine.state.pending_direction,
+        }
+        redis_client.set("cce:state", json.dumps(state_to_save))
+
+        return {
+            "task": task_name,
+            "observed_latency": observed_latency,
+            "capacity_agent": cap_intent.value,
+            "network_agent": net_intent.value,
+            "final_intent": record.final_intent,
+            "reason": record.arbitration_reason,
+            "intent_changed": record.intent_changed,
+            "intent_age": record.final_intent_age,
+            "intervention_distance": record.intervention_distance,
+            "trust_score": _per_step_trust(record.intervention_distance),
+            "summary": summary,
+            "window_size": len(_live_sup.engine.state.recent_latency),
+            "window_contents": list(_live_sup.engine.state.recent_latency)[-8:],
+            "signal_age": _live_sup.engine.state.signal_age,
+            "signal_needed": _live_sup.engine.cfg.min_dwell_time,
+        }
+    finally:
+        lock.release()
+
+    
 
 def run_simulation(steps) -> dict:
     """
