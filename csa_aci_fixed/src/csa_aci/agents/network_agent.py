@@ -17,6 +17,7 @@ controller cannot.
 from __future__ import annotations
 
 from ..intent import Intent
+from ..telemetry import is_finite_value
 
 
 class NetworkAgent:
@@ -65,6 +66,18 @@ class NetworkAgent:
             if isinstance(telemetry, dict)
             else telemetry.observed_latency
         )
+
+        # An agent that cannot read its signal has no opinion: abstain to HOLD
+        # rather than raise. See CapacityAgent.step for the reasoning — a failed
+        # scrape yields None, and comparing it raises inside the agent before
+        # the CCE can name the problem.
+        if not is_finite_value(latency):
+            if self.current_intent != Intent.HOLD:
+                self.current_intent = Intent.HOLD
+                self.intent_age     = 0
+            else:
+                self.intent_age += 1
+            return self.current_intent, "NO_OP"
 
         if latency >= self.up_latency:
             new_intent = Intent.SCALE_UP

@@ -33,3 +33,19 @@ def test_metrics_exposes_prometheus_format():
     # request metrics must be present.
     assert "# HELP" in body
     assert "http_request" in body
+
+
+def test_invalid_input_counter_is_scrapeable():
+    """A non-finite reading must show up as an alertable series, not just in
+    the response body. This failure is silent by nature — the governor stops
+    governing while emitting a calm-looking HOLD — so /metrics is the only
+    place an operator would ever notice it."""
+    from app.services.supervisor_engine import run_supervised_task
+
+    result = run_supervised_task("nan-probe", observed_latency=float("nan"))
+    assert result["reason"] == "INVALID_INPUT"
+    assert result["invalid_fields"] == ["observed_latency"]
+
+    body = client.get("/metrics").text
+    assert "csa_aci_invalid_input_total" in body
+    assert 'field="observed_latency"' in body

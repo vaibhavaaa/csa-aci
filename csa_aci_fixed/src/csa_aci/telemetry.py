@@ -15,8 +15,27 @@ compatibility with existing simulation code.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Dict, Any
+
+
+def is_finite_value(value) -> bool:
+    """True only for values that are real, numeric and finite.
+
+    Deliberately broad: NaN, ±inf, None and non-numeric types all return False.
+    Lives here because both layers need it and telemetry.py is a leaf module:
+    the CCE uses it to decide whether it can govern a reading at all, and the
+    agents use it to decide whether they can form an opinion about one.
+
+    None matters as much as NaN in practice — a metrics scrape that fails
+    returns no value, not a NaN, and an unguarded comparison against None
+    raises TypeError rather than quietly evaluating False.
+    """
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 @dataclass

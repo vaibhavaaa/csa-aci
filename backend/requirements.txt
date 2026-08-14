@@ -22,13 +22,11 @@ python-dotenv==1.0.1
 
 # ── Observability (Prometheus /metrics) ──
 prometheus-fastapi-instrumentator==8.0.2
+# Direct dependency: app/core/metrics.py defines the CCE governance counters.
+prometheus-client==0.25.0
 
-# ── Redis (WebSocket pub/sub) + task queue ──
+# ── Redis (WebSocket pub/sub) ──
 redis[asyncio]==7.4.0
-rq==2.8.0
-
-# ── AWS SDK ──
-boto3==1.40.11
 
 # ── Research / statistics (Phase 0+) ──
 # Exact pins matter here: numerical results can shift across numpy/scipy versions.

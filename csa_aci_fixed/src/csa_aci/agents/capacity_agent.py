@@ -17,6 +17,7 @@ is what makes CSA-ACI a multi-signal governance layer rather than a smoother.
 from __future__ import annotations
 
 from ..intent import Intent
+from ..telemetry import is_finite_value
 
 
 class CapacityAgent:
@@ -64,6 +65,19 @@ class CapacityAgent:
             if isinstance(telemetry, dict)
             else telemetry.cpu_utilisation
         )
+
+        # An agent that cannot read its signal has no opinion: abstain to HOLD
+        # rather than raise. A failed metrics scrape yields None, not NaN, and
+        # `None >= 0.75` is a TypeError — which would crash the governor inside
+        # the agent, before the CCE's own validation could name the problem.
+        # The raw value still reaches the CCE, which reports INVALID_INPUT.
+        if not is_finite_value(cpu):
+            if self.current_intent != Intent.HOLD:
+                self.current_intent = Intent.HOLD
+                self.intent_age     = 0
+            else:
+                self.intent_age += 1
+            return self.current_intent, "NO_OP"
 
         if cpu >= self.up_cpu:
             new_intent = Intent.SCALE_UP

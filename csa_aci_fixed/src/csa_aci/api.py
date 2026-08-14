@@ -39,6 +39,12 @@ class GovernanceDecision:
     final_intent_age:      int
     intervention_distance: float
 
+    # Non-empty when an input failed the finiteness check: the step was held at
+    # HOLD and `arbitration_reason` is INVALID_INPUT. Adopting systems that
+    # derive magnitudes from a ratio (utilisation, queue depth) should alert on
+    # this — it means CSA-ACI declined to govern rather than guessed.
+    invalid_fields:        tuple = ()
+
 
 class CSAACI:
     """
@@ -80,4 +86,5 @@ class CSAACI:
             intent_changed        = out.intent_changed,
             final_intent_age      = out.final_intent_age,
             intervention_distance = out.intervention_distance,
+            invalid_fields        = out.invalid_fields,
         )

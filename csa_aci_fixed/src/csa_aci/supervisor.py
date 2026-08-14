@@ -39,6 +39,7 @@ class StepRecord:
     intervention_distance: float
     capacity_action_mag:  float
     network_action_mag:   float
+    invalid_fields:       tuple = ()   # non-empty only on INVALID_INPUT steps
 
 
 class Supervisor:
@@ -117,6 +118,7 @@ class Supervisor:
             intervention_distance = out.intervention_distance,
             capacity_action_mag   = out.capacity_action_mag,
             network_action_mag    = out.network_action_mag,
+            invalid_fields        = out.invalid_fields,
         )
         self.log.append(record)
         return record
@@ -143,6 +145,16 @@ class Supervisor:
             if r.capacity_intent != r.network_intent
         )
 
+    @property
+    def invalid_input_count(self) -> int:
+        """Steps held at HOLD because an input was non-finite.
+
+        Monotonic for the life of this Supervisor. Non-zero means the governor
+        was fed values it could not interpret and declined to act on them —
+        surface it as an alert, not a log line.
+        """
+        return self.engine.state.invalid_input_count
+
     def summary(self) -> dict:
         return {
             "total_steps":         len(self.log),
@@ -151,4 +163,5 @@ class Supervisor:
             "conflict_count":      self.conflict_count,
             "last_intent":         self.system_state.current_intent.value,
             "last_reason":         self.system_state.last_arbitration_reason,
+            "invalid_input_count": self.invalid_input_count,
         }

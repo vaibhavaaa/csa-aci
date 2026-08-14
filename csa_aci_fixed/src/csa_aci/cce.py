@@ -54,10 +54,13 @@ STEP 5 — Magnitude Clamping
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 from collections import deque
+
+from .telemetry import is_finite_value
 
 
 # -----------------------------------------------------------------
@@ -76,6 +79,9 @@ class ArbitrationReason(str, Enum):
     EVIDENCE_REJECT      = "EVIDENCE_REJECT"       # window not full or not enough hits
     EVIDENCE_ACCEPT      = "EVIDENCE_ACCEPT"       # evidence ok + dwell met → switching
     EMERGENCY_OVERRIDE   = "EMERGENCY_OVERRIDE"    # latency/CPU >= critical threshold
+
+    # ── Input validation stage (Step 0)
+    INVALID_INPUT        = "INVALID_INPUT"         # non-finite input → hold, don't guess
 
 
 # -----------------------------------------------------------------
@@ -135,6 +141,12 @@ class CCEState:
     recent_latency: deque = field(default_factory=deque)
     recent_cpu:     deque = field(default_factory=deque)
 
+    # input-validation accounting — a monotonic counter the host process can
+    # export as an alertable metric. A governor that stops governing must be
+    # visible from outside; see paper §Limitations.
+    invalid_input_count: int = 0
+    last_invalid_fields: tuple = ()
+
     def init_buffers(self, cfg: CCEConfig) -> None:
         self.recent_latency = deque(maxlen=cfg.max_latency_buffer)
         self.recent_cpu     = deque(maxlen=cfg.max_latency_buffer)
@@ -157,6 +169,9 @@ class CCEOutput:
     final_intent_age:     int
     signal_age:           int       # exposed so dashboard can show progress
     intervention_distance: float
+    # names of the inputs that failed the finiteness check this step; empty on
+    # every normal step. Non-empty always accompanies INVALID_INPUT.
+    invalid_fields:       tuple = ()
 
 
 # -----------------------------------------------------------------
@@ -197,6 +212,59 @@ class CognitiveConstraintEngine:
         network_action_mag:   float,
         cpu_utilisation:      float = 0.0,
     ) -> CCEOutput:
+
+        # ----------------------------------------------------------------
+        # STEP 0 — Input validation (paper §4 Lemma 2, §Limitations)
+        #
+        # CSA-ACI is published as a drop-in governance module: magnitudes and
+        # telemetry arrive from the caller, and an adopting system computing a
+        # magnitude from a utilisation ratio or queue-depth quotient can hand
+        # us NaN under ordinary conditions (an empty observation window).
+        #
+        # Untreated, that is silent: IEEE-754 comparisons against NaN are False
+        # in both directions, so every threshold test fails, both agents fall
+        # through to HOLD, and — worst of all — the emergency branch never
+        # fires. The governor stops governing while reporting normal operation.
+        #
+        # Policy: unclear input → HOLD, name the reason, count it. We do NOT
+        # raise: a governance layer that crashes the system it governs has
+        # failed at its job, and a metrics glitch is exactly the moment the
+        # governed system most needs to stay up.
+        # ----------------------------------------------------------------
+        invalid_fields = tuple(
+            name for name, value in (
+                ("observed_latency",    observed_latency),
+                ("cpu_utilisation",     cpu_utilisation),
+                ("capacity_action_mag", capacity_action_mag),
+                ("network_action_mag",  network_action_mag),
+            )
+            if not is_finite_value(value)
+        )
+
+        if invalid_fields:
+            self.state.invalid_input_count += 1
+            self.state.last_invalid_fields = invalid_fields
+
+            # The reading is NOT appended to the evidence buffers — a value we
+            # cannot interpret must never enter the window it would corrupt.
+            #
+            # Dwell state is left untouched, exactly as EVIDENCE_REJECT leaves
+            # it: a single glitched reading must not erase signal age the
+            # system legitimately accumulated over the preceding steps.
+            #
+            # Magnitudes are forced to 0.0 so intervention_distance stays
+            # finite and non-negative; the corrupt request is discarded whole
+            # rather than differenced against.
+            final_intent, intent_changed = self._resolve_final_intent("HOLD")
+            return self._build_output(
+                final_intent,
+                ArbitrationReason.INVALID_INPUT.value,
+                ArbitrationReason.INVALID_INPUT.value,
+                intent_changed,
+                capacity_action_type, 0.0,
+                network_action_type,  0.0,
+                invalid_fields=invalid_fields,
+            )
 
         self.state.recent_latency.append(float(observed_latency))
         self.state.recent_cpu.append(float(cpu_utilisation))
@@ -327,26 +395,33 @@ class CognitiveConstraintEngine:
         # ----------------------------------------------------------------
         # STEP 3 — Final intent resolution
         # ----------------------------------------------------------------
-        if self.state.last_final_intent is None:
-            final_intent   = proposed_intent
-            intent_changed = True
-            self.state.final_intent_age = 0
-        elif proposed_intent != self.state.last_final_intent:
-            final_intent   = proposed_intent
-            intent_changed = True
-            self.state.final_intent_age = 0
-        else:
-            final_intent   = proposed_intent
-            intent_changed = False
-            self.state.final_intent_age += 1
-
-        self.state.last_final_intent = final_intent
+        final_intent, intent_changed = self._resolve_final_intent(proposed_intent)
 
         return self._build_output(
             final_intent, arb_reason, conflict_reason, intent_changed,
             capacity_action_type, capacity_action_mag,
             network_action_type,  network_action_mag,
         )
+
+    def _resolve_final_intent(self, proposed_intent: str) -> tuple:
+        """STEP 3 — commit the proposed intent and update age bookkeeping.
+
+        Extracted so the Step-0 invalid-input path commits its HOLD through
+        exactly the same bookkeeping as a normal step, rather than a parallel
+        copy that could drift.
+        """
+        if (
+            self.state.last_final_intent is None
+            or proposed_intent != self.state.last_final_intent
+        ):
+            intent_changed = True
+            self.state.final_intent_age = 0
+        else:
+            intent_changed = False
+            self.state.final_intent_age += 1
+
+        self.state.last_final_intent = proposed_intent
+        return proposed_intent, intent_changed
 
     def _build_output(
         self,
@@ -358,6 +433,7 @@ class CognitiveConstraintEngine:
         capacity_action_mag:  float,
         network_action_type:  str,
         network_action_mag:   float,
+        invalid_fields:       tuple = (),
     ) -> CCEOutput:
         # ----------------------------------------------------------------
         # STEP 4 — Minimal Intervention Projection
@@ -405,6 +481,7 @@ class CognitiveConstraintEngine:
             final_intent_age      = self.state.final_intent_age,
             signal_age            = self.state.signal_age,
             intervention_distance = intervention_distance,
+            invalid_fields        = invalid_fields,
         )
 
     def _evidence_ok_for_intent(self, proposed_intent: str) -> bool:
@@ -434,7 +511,25 @@ class CognitiveConstraintEngine:
         return True
 
     def _clamp(self, prev: float, proposed: float, max_step: float) -> float:
+        """Bound the realized per-step magnitude delta (paper §4, Lemma 2 —
+        Bounded Per-Step Actuation).
+
+        Default-DENY: the in-range case is positively confirmed before
+        `proposed` is allowed through. The previous form tested only the two
+        out-of-range branches and fell through to `return proposed`, so a
+        non-finite delta — for which every IEEE-754 comparison evaluates
+        False in both directions — escaped unclamped, and once written into
+        `last_*_mag` it made every subsequent delta non-finite too, disabling
+        the bound for the rest of the process lifetime.
+
+        Non-finite proposals now hold position at `prev`. Since `prev` starts
+        at 0.0 and every return value here is finite whenever `prev` and
+        `max_step` are, the engine's magnitude state is finite by induction:
+        a non-finite value cannot enter it at all.
+        """
         delta = proposed - prev
-        if delta >  max_step: return prev + max_step
-        if delta < -max_step: return prev - max_step
-        return proposed
+        if -max_step <= delta <= max_step:
+            return proposed
+        if math.isfinite(delta):
+            return prev + math.copysign(max_step, delta)
+        return prev

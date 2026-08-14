@@ -14,18 +14,23 @@ NOTE — per_step_trust formula:
     the thesis.  For cross-run comparisons use CSI and TrustDecayModel
     instead — those are the citable metrics.
 """
-import redis 
+
 import json
+import logging
 import os
+from collections import deque
+from contextlib import contextmanager
 
-
-redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+import redis
 
 from csa_aci import Supervisor, TelemetrySnapshot
 from csa_aci.agents import CapacityAgent, NetworkAgent
 from csa_aci import compute_csi, TrustDecayModel
 
+from app.core.config import REDIS_URL
+from app.core.metrics import CCE_INVALID_INPUT_TOTAL
 
+log = logging.getLogger(__name__)
 
 # Max expected intervention distance used to normalise per-step trust.
 # Empirical: capacity_mag clamped to 1.0 + network_mag clamped to 1.0
@@ -47,12 +52,126 @@ _live_cap = CapacityAgent()
 _live_net = NetworkAgent()
 
 
+# ── A1: shared live CCE state across replicas ─────────────────────────────────
+#
+# The live evidence window and dwell timer must be one shared object, not one
+# per pod: with `replicas: 2` and per-process state each pod sees half the
+# telemetry, so both the evidence gate and the dwell timer are evaluated
+# against a partial history. State lives in Redis under `cce:state` and the
+# read-modify-write is serialized by `cce:lock`.
+#
+# Redis is required for that guarantee to hold, but NOT for a single process to
+# be correct — in CI, local dev, and the test suite there is exactly one
+# process, so that process's own memory already is the shared state. Set
+# CCE_REQUIRE_REDIS=1 (the k8s manifests should) to turn an unreachable Redis
+# into a hard failure instead of a silent downgrade to per-process state.
+REQUIRE_REDIS = os.getenv("CCE_REQUIRE_REDIS", "").strip().lower() in ("1", "true", "yes")
+
+_redis_client = None
+_redis_unavailable = False
+
+
+def _get_redis():
+    """Return a live Redis client, or None when running single-process.
+
+    `redis.from_url` does not connect eagerly, so the ping is what actually
+    establishes reachability. The negative result is cached: without it every
+    request would pay a full connection timeout while Redis is down.
+    `reset_live_supervisor()` clears the cache, which is the re-probe path.
+    """
+    global _redis_client, _redis_unavailable
+
+    if _redis_unavailable:
+        return None
+    if _redis_client is None:
+        try:
+            client = redis.from_url(REDIS_URL, socket_connect_timeout=2)
+            client.ping()
+            _redis_client = client
+        except Exception as exc:
+            if REQUIRE_REDIS:
+                raise
+            _redis_unavailable = True
+            log.warning(
+                "Redis unreachable at %s (%s). Live CCE state is per-process; "
+                "this is correct for a single replica only. Set "
+                "CCE_REQUIRE_REDIS=1 to fail instead of degrading.",
+                REDIS_URL, exc,
+            )
+            return None
+    return _redis_client
+
+
+@contextmanager
+def _live_state_lock(client):
+    """Serialize the live read-modify-write so only one pod decides at a time."""
+    if client is None:
+        yield
+        return
+
+    # blocking_timeout is essential: without it a pod that dies holding the
+    # lock would block every other pod's request thread indefinitely, instead
+    # of surfacing as a 500 after 5s.
+    lock = client.lock("cce:lock", timeout=10, blocking=True, blocking_timeout=5)
+    if not lock.acquire():
+        raise RuntimeError("could not acquire cce:lock within 5s")
+    try:
+        yield
+    finally:
+        try:
+            lock.release()
+        except redis.exceptions.LockError:
+            # Held longer than `timeout` and auto-expired; another pod may own
+            # it now. Releasing is not ours to do, but the step did complete.
+            log.warning("cce:lock expired before release — step exceeded 10s")
+
+
+def _dump_live_state(state) -> str:
+    """Serialize the shared slice of CCEState.
+
+    `recent_latency` / `recent_cpu` are deques, which json.dumps cannot encode
+    — on a cold start (nothing in Redis yet) this raised TypeError on the very
+    first write, which is the path that runs in production exactly once.
+    """
+    return json.dumps({
+        "recent_latency": list(state.recent_latency),
+        "recent_cpu": list(state.recent_cpu),
+        "signal_age": state.signal_age,
+        "pending_direction": state.pending_direction,
+    })
+
+
+def _load_live_state(state, cfg, raw) -> None:
+    """Restore shared state, preserving the buffers' bounds.
+
+    The buffers are `deque(maxlen=cfg.max_latency_buffer)`. Assigning a plain
+    list from JSON keeps the evidence gate working (it slices `[-K:]`) but
+    drops the bound, so the buffer — and the JSON blob written back to Redis —
+    grows without limit for the life of the deployment, and the `window_size`
+    the dashboard reports stops being capped. Restore into a bounded deque:
+    `deque(it, maxlen=N)` keeps the LAST N, which is the same truncation the
+    live buffer would have applied.
+    """
+    d = json.loads(raw)
+    maxlen = cfg.max_latency_buffer
+    state.recent_latency = deque(d.get("recent_latency") or [], maxlen=maxlen)
+    state.recent_cpu = deque(d.get("recent_cpu") or [], maxlen=maxlen)
+    state.signal_age = d.get("signal_age", 0)
+    state.pending_direction = d.get("pending_direction")
+
+
 def reset_live_supervisor() -> None:
     """Reset persistent supervisor — clears evidence window and dwell timer."""
-    global _live_sup, _live_cap, _live_net
+    global _live_sup, _live_cap, _live_net, _redis_unavailable
     _live_sup = Supervisor()
     _live_cap = CapacityAgent()
     _live_net = NetworkAgent()
+
+    # Clear the shared copy too, or the next request reloads what we just reset.
+    _redis_unavailable = False
+    client = _get_redis()
+    if client is not None:
+        client.delete("cce:state")
 
 
 def run_supervised_task(
@@ -62,26 +181,26 @@ def run_supervised_task(
     throughput: float = 0.0,
 ):
     """
-    Acquires Redis lock, loads shared state, runs CCE, saves state back.
-    Ensures multi-replica consistency: only one pod makes decisions at a time.
+    Runs one live CCE step: load shared state, arbitrate, save state back.
+
+    The evidence window and dwell timer are shared across replicas via Redis
+    and the read-modify-write is serialized by `cce:lock`, so only one pod
+    decides at a time (A1). When no Redis is reachable and CCE_REQUIRE_REDIS is
+    unset, the module-level supervisor is itself the shared state and the lock
+    is a no-op — correct for a single process, and what CI and the tests run.
+
+    Agents observe the provided telemetry and propose intents; CCE governs the
+    final decision.
     """
     global _live_sup, _live_cap, _live_net
-    
-    # Acquire lock: only one pod decides at a time
-    lock_key = "cce:lock"
-    lock = redis_client.lock(lock_key, timeout=10, blocking=True)
-    lock.acquire()
-    
-    try:
-        # Load shared state from Redis
-        state_json = redis_client.get("cce:state")
-        if state_json:
-            state_dict = json.loads(state_json)
-            _live_sup.engine.state.recent_latency = state_dict.get("recent_latency", [])
-            _live_sup.engine.state.recent_cpu = state_dict.get("recent_cpu", [])
-            _live_sup.engine.state.signal_age = state_dict.get("signal_age", 0)
-            _live_sup.engine.state.pending_direction = state_dict.get("pending_direction", None)
-        
+    client = _get_redis()
+
+    with _live_state_lock(client):
+        if client is not None:
+            raw = client.get("cce:state")
+            if raw:
+                _load_live_state(_live_sup.engine.state, _live_sup.engine.cfg, raw)
+
         sup = _live_sup
         cap = _live_cap
         net = _live_net
@@ -107,16 +226,16 @@ def run_supervised_task(
             network_action_mag=-1.0 if net_intent.value == "SCALE_DOWN" else 0.0,
         )
 
+        # Export the governance-health counter. This failure is silent by nature —
+        # a non-finite reading yields a calm-looking HOLD — so it must be alertable
+        # from outside the process, not merely present in the response body.
+        for field_name in record.invalid_fields:
+            CCE_INVALID_INPUT_TOTAL.labels(field=field_name).inc()
+
         summary = sup.summary()
 
-        # Save state back to Redis
-        state_to_save = {
-            "recent_latency": _live_sup.engine.state.recent_latency,
-            "recent_cpu": _live_sup.engine.state.recent_cpu,
-            "signal_age": _live_sup.engine.state.signal_age,
-            "pending_direction": _live_sup.engine.state.pending_direction,
-        }
-        redis_client.set("cce:state", json.dumps(state_to_save))
+        if client is not None:
+            client.set("cce:state", _dump_live_state(_live_sup.engine.state))
 
         return {
             "task": task_name,
@@ -125,6 +244,7 @@ def run_supervised_task(
             "network_agent": net_intent.value,
             "final_intent": record.final_intent,
             "reason": record.arbitration_reason,
+            "invalid_fields": list(record.invalid_fields),
             "intent_changed": record.intent_changed,
             "intent_age": record.final_intent_age,
             "intervention_distance": record.intervention_distance,
@@ -135,10 +255,6 @@ def run_supervised_task(
             "signal_age": _live_sup.engine.state.signal_age,
             "signal_needed": _live_sup.engine.cfg.min_dwell_time,
         }
-    finally:
-        lock.release()
-
-    
 
 def run_simulation(steps) -> dict:
     """
@@ -1328,6 +1444,19 @@ def _run_cce_records(seq, cfg=None):
     return recs
 
 
+def _record_fingerprint(r):
+    """The full observable output of one CCE step.
+
+    Lemma 4 claims identical input sequences produce identical OUTPUT
+    sequences — which is a claim about every emitted field, not just the
+    intent. Comparing only final_intent would pass two runs that disagree on
+    why they held.
+    """
+    return (r.final_intent, r.arbitration_reason, r.conflict_reason,
+            r.capacity_action_mag, r.network_action_mag,
+            r.intervention_distance, r.intent_changed, r.final_intent_age)
+
+
 def _direction_change_indices(recs):
     """Indices where the final intent establishes a NEW action direction
     (UP<->DOWN), ignoring HOLD — i.e. real direction changes."""
@@ -1453,16 +1582,22 @@ def run_conflict_stress_test(n_runs: int = 30) -> dict:
     }
 
 
-def run_guarantee_audit(seeds=(1, 2, 3, 4, 5)) -> dict:
+def run_guarantee_audit(seeds=(1, 2, 3, 4, 5), cfg=None) -> dict:
     """Empirically certify CSA-ACI's operating guarantees across seeds.
 
     Each check corresponds to a stated lemma in paper/sections/guarantees.md —
     the audit is the empirical certification of those proof sketches.
+
+    `cfg` defaults to CCEConfig(). It is a parameter so the lemmas can be
+    certified against the configurations the sensitivity sweep actually
+    explores, not only the shipped defaults — 28 of the 100 cells in
+    run_sensitivity_sweep()'s grid have min_dwell_time < evidence_window, where
+    the response-lag bound is the window rather than the dwell.
     """
     import random
     from csa_aci import CCEConfig
 
-    cfg = CCEConfig()
+    cfg = cfg or CCEConfig()
     K, D = cfg.evidence_window, cfg.min_dwell_time
     maxc, maxn = cfg.max_capacity_step, cfg.max_network_step
 
@@ -1476,15 +1611,31 @@ def run_guarantee_audit(seeds=(1, 2, 3, 4, 5)) -> dict:
         "property": f"Lemma 2 (Bounded Actuation): per-step magnitude change <= max_step (cap {maxc}, net {maxn})",
         "violations": 0, "observed_max_step": 0.0,
     }
+    # The response-lag bound is max(D, K), NOT D. A switch needs BOTH
+    # signal_age >= D and a full evidence window, so when D < K the window is
+    # the binding constraint. The sweep grid in run_sensitivity_sweep() reaches
+    # D < K (e.g. D=5, K=8), so this cannot be assumed away.
+    lag_bound = max(D, K)
     bounded_response_lag = {
         "lemma": 3,
-        "property": f"Lemma 3 (Bounded Response Lag): persistent signal acted on within min_dwell_time ({D}); emergency in 1 step",
+        "property": f"Lemma 3 (Bounded Response Lag): persistent signal acted on within max(min_dwell_time, evidence_window) = max({D}, {K}) = {lag_bound} steps; emergency in 1 step",
         "violations": 0, "observed_normal_lag": [], "observed_emergency_lag": [],
+        "bound": lag_bound,
     }
     deterministic = {
         "lemma": 4,
-        "property": "Lemma 4 (Determinism & Accountability): identical inputs -> identical outputs, every step carries a named reason",
+        "property": "Lemma 4 (Determinism & Accountability): identical inputs -> identical FULL output records (intent, reasons, magnitudes), every step carries a named reason",
         "violations": 0,
+    }
+    emergency_credit = {
+        "lemma": "1b",
+        "property": f"Lemma 1b (Emergency credit is direction-scoped): after an emergency forces SCALE_UP, the next reversal to SCALE_DOWN is >= min_dwell_time ({D}) steps away, while a sustained SCALE_UP may resume sooner (evidence-gated only)",
+        "violations": 0, "observed_down_gaps": [], "observed_up_gaps": [],
+    }
+    invalid_input = {
+        "lemma": 2,
+        "property": "Input validation (Lemma 2 boundary): non-finite input is held at HOLD, named INVALID_INPUT, counted, and never enters the evidence buffers; the emergency path still fires on the next good reading",
+        "violations": 0, "checks_run": 0,
     }
 
     for s in seeds:
@@ -1515,33 +1666,119 @@ def run_guarantee_audit(seeds=(1, 2, 3, 4, 5)) -> dict:
                 bounded_intervention["violations"] += 1
             prev_c, prev_n = r.capacity_action_mag, r.network_action_mag
 
-        # Bound 3a: sustained genuine high latency (below critical) -> act within D.
-        recs_hi = _run_cce_records([(150.0, 0.5)] * (D + K + 5), cfg)
-        up = next((i for i, r in enumerate(recs_hi) if r.final_intent == "SCALE_UP"), None)
-        bounded_response_lag["observed_normal_lag"].append(up)
-        if up is None or up > D:
+        # Bound 3a: sustained genuine high latency (below critical) -> act
+        # within max(D, K). Lag is reported as a 1-BASED step count so it is
+        # comparable to the bound; the earlier version compared a 0-based index
+        # against D, which granted one step of silent slack and let a genuinely
+        # broken config (D = K-1) certify clean.
+        recs_hi = _run_cce_records([(150.0, 0.5)] * (lag_bound + K + 5), cfg)
+        up0 = next((i for i, r in enumerate(recs_hi) if r.final_intent == "SCALE_UP"), None)
+        up_steps = None if up0 is None else up0 + 1
+        bounded_response_lag["observed_normal_lag"].append(up_steps)
+        if up_steps is None or up_steps > lag_bound:
             bounded_response_lag["violations"] += 1
 
         # Bound 3b: emergency (>= critical latency) -> act on the first step.
         recs_em = _run_cce_records([(350.0, 0.5)] * 5, cfg)
-        up_em = next((i for i, r in enumerate(recs_em) if r.final_intent == "SCALE_UP"), None)
-        bounded_response_lag["observed_emergency_lag"].append(up_em)
-        if up_em is None or up_em > 0:
+        em0 = next((i for i, r in enumerate(recs_em) if r.final_intent == "SCALE_UP"), None)
+        em_steps = None if em0 is None else em0 + 1
+        bounded_response_lag["observed_emergency_lag"].append(em_steps)
+        if em_steps is None or em_steps > 1:
             bounded_response_lag["violations"] += 1
 
         # Bound 4: determinism + every step has a reason.
+        # Compares the FULL record, not just final_intent. The lemma claims
+        # identical OUTPUT sequences, and a reason-only divergence (two runs
+        # both saying HOLD, one via EVIDENCE_REJECT and one via
+        # MIN_DWELL_BLOCK) is precisely the accountability failure this lemma
+        # exists to exclude — invisible to a final_intent-only comparison.
         seq_det = [(max(5.0, b + random.gauss(0, 8)), 0.5) for b in blocks]
-        d1 = [r.final_intent for r in _run_cce_records(seq_det, cfg)]
-        d2 = [r.final_intent for r in _run_cce_records(seq_det, cfg)]
-        recs_reason = _run_cce_records(seq_det, cfg)
-        if d1 != d2 or any(not r.arbitration_reason for r in recs_reason):
+        d1 = _run_cce_records(seq_det, cfg)
+        d2 = _run_cce_records(seq_det, cfg)
+        if ([_record_fingerprint(r) for r in d1] != [_record_fingerprint(r) for r in d2]
+                or any(not r.arbitration_reason for r in d1)):
             deterministic["violations"] += 1
+
+        # Lemma 1b: emergency credit is direction-scoped.
+        #
+        # The Lemma-1 scenario above cannot test this: its blocks peak at 150ms
+        # against a 300ms critical threshold, so NO emergency ever fires in it.
+        # The normal -> emergency -> normal transition, which is exactly where a
+        # credit-leak bug would live, needs super-critical telemetry.
+        #
+        # Stacked emergencies are included because each one re-grants dwell
+        # credit to SCALE_UP; the question is whether that erodes the DOWN-side
+        # bound. Idle pre-loading keeps DOWN's evidence satisfied so the dwell
+        # timer is the constraint under test.
+        for n_em in (1, 2, 3):
+            idle_gap = [(30.0, 0.10)] * 3
+            seq_down = ([(30.0, 0.10)] * 14
+                        + ([(350.0, 0.10)] + idle_gap) * n_em
+                        + [(30.0, 0.10)] * (D + K + 8))
+            recs_1b = _run_cce_records(seq_down, cfg)
+            em_idx = [i for i, r in enumerate(recs_1b)
+                      if r.arbitration_reason == "EMERGENCY_OVERRIDE"]
+            down_idx = next((i for i, r in enumerate(recs_1b)
+                             if i > em_idx[-1] and r.final_intent == "SCALE_DOWN"), None)
+            if em_idx and down_idx is not None:
+                gap = down_idx - em_idx[-1]
+                emergency_credit["observed_down_gaps"].append(gap)
+                if gap < D:
+                    emergency_credit["violations"] += 1
+            else:
+                emergency_credit["violations"] += 1
+
+        # (b) the complementary half: a sustained SCALE_UP after the emergency
+        # keeps its credit and is gated by evidence alone, so it may resume in
+        # FEWER than D steps. An emergency accelerates toward capacity only.
+        seq_up = ([(30.0, 0.10)] * 14 + [(350.0, 0.10)]
+                  + [(150.0, 0.80)] * (D + K + 8))
+        recs_up = _run_cce_records(seq_up, cfg)
+        em_up = next((i for i, r in enumerate(recs_up)
+                      if r.arbitration_reason == "EMERGENCY_OVERRIDE"), None)
+        up_again = next((i for i, r in enumerate(recs_up)
+                         if em_up is not None and i > em_up
+                         and r.final_intent == "SCALE_UP"), None)
+        if em_up is None or up_again is None:
+            emergency_credit["violations"] += 1
+        else:
+            emergency_credit["observed_up_gaps"].append(up_again - em_up)
+
+        # Input validation at the package boundary (Lemma 2's published
+        # contract). A non-finite value must be held and named rather than
+        # acted on, must not enter the evidence window, and must not disable
+        # the emergency path — the silent-governor failure mode.
+        for bad in (float("nan"), float("inf"), None):
+            sup_v = Supervisor(cfg=cfg)
+            rec_bad = sup_v.step(
+                telemetry=TelemetrySnapshot(observed_latency=bad, cpu_utilisation=0.5),
+                capacity_intent="SCALE_UP", capacity_intent_age=0,
+                capacity_action_type="NO_OP", capacity_action_mag=1.0,
+                network_intent="SCALE_UP", network_intent_age=0,
+                network_action_type="NO_OP", network_action_mag=1.0,
+            )
+            rec_em = sup_v.step(
+                telemetry=TelemetrySnapshot(observed_latency=350.0, cpu_utilisation=0.5),
+                capacity_intent="SCALE_UP", capacity_intent_age=1,
+                capacity_action_type="NO_OP", capacity_action_mag=1.0,
+                network_intent="SCALE_UP", network_intent_age=1,
+                network_action_type="NO_OP", network_action_mag=1.0,
+            )
+            invalid_input["checks_run"] += 1
+            if (rec_bad.final_intent != "HOLD"
+                    or rec_bad.arbitration_reason != "INVALID_INPUT"
+                    or sup_v.invalid_input_count != 1
+                    or len(sup_v.engine.state.recent_latency) != 1   # only the good one
+                    or rec_em.arbitration_reason != "EMERGENCY_OVERRIDE"):
+                invalid_input["violations"] += 1
 
     checks = {
         "bounded_switching": bounded_switching,
         "bounded_intervention": bounded_intervention,
         "bounded_response_lag": bounded_response_lag,
         "deterministic_arbitration": deterministic,
+        "emergency_credit_scoped": emergency_credit,
+        "input_validation": invalid_input,
     }
     for c in checks.values():
         c["passed"] = c["violations"] == 0
@@ -1549,7 +1786,9 @@ def run_guarantee_audit(seeds=(1, 2, 3, 4, 5)) -> dict:
     return {
         "seeds": list(seeds),
         "config": {"evidence_window": K, "min_dwell_time": D,
-                   "max_capacity_step": maxc, "max_network_step": maxn},
+                   "max_capacity_step": maxc, "max_network_step": maxn,
+                   "response_lag_bound": lag_bound,
+                   "dwell_ge_window": D >= K},
         "checks": checks,
         "all_passed": all(c["passed"] for c in checks.values()),
     }

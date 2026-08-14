@@ -50,6 +50,8 @@ data/processed/
 # ===== Personal / out-of-scope (kept locally, not published) =====
 resume.tex
 dashboard-redesign-variants/
+DEVOPS_PLAN.md
+DEVOPS_NOTES.md
 
 # Unpublished research — kept local, NOT public until the paper is published.
 paper/
@@ -59,3 +61,6 @@ IDEAS.md
 artifacts/
 # Real k8s secrets manifest — only the *.example template is tracked.
 infra/deployment/secrets.yaml
+# Throwaway CCE probe scripts — they live in backend/ so they run inside the
+# container, but the audit + test suite are the production checks, not these.
+backend/probe_*.py
